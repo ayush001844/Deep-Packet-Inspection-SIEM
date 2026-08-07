@@ -4,6 +4,25 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 const API_BASE = '';
 const WS_BASE = `ws://${window.location.hostname}:8000`;
 
+/* ── Auth helpers ───────────────────────────────────────────── */
+function getAuthHeaders() {
+  const token = localStorage.getItem('token');
+  const headers = { 'Content-Type': 'application/json' };
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
+  return headers;
+}
+
+function handle401(res) {
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('username');
+    localStorage.removeItem('role');
+    window.location.href = '/';
+  }
+}
+
 /* ── REST API Hook ───────────────────────────────────────────── */
 export function useApi(endpoint, options = {}) {
   const [data, setData] = useState(null);
@@ -14,7 +33,10 @@ export function useApi(endpoint, options = {}) {
   const fetchData = useCallback(async () => {
     if (!enabled) return;
     try {
-      const res = await fetch(`${API_BASE}${endpoint}`);
+      const res = await fetch(`${API_BASE}${endpoint}`, {
+        headers: getAuthHeaders(),
+      });
+      handle401(res);
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const json = await res.json();
       setData(json);
@@ -40,9 +62,10 @@ export function useApi(endpoint, options = {}) {
 export async function apiPost(endpoint, body = {}) {
   const res = await fetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getAuthHeaders(),
     body: JSON.stringify(body),
   });
+  handle401(res);
   if (!res.ok) {
     const err = await res.json().catch(() => ({ detail: `HTTP ${res.status}` }));
     throw new Error(err.detail || `HTTP ${res.status}`);
@@ -51,12 +74,19 @@ export async function apiPost(endpoint, body = {}) {
 }
 
 export async function apiUpload(endpoint, file) {
+  const token = localStorage.getItem('token');
+  const headers = {};
+  if (token) {
+    headers['Authorization'] = `Bearer ${token}`;
+  }
   const form = new FormData();
   form.append('file', file);
   const res = await fetch(`${API_BASE}${endpoint}`, {
     method: 'POST',
+    headers,
     body: form,
   });
+  handle401(res);
   return res.json();
 }
 

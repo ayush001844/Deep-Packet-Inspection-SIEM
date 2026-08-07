@@ -19,7 +19,7 @@ import time
 from collections import deque
 from typing import Any
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Query, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Query, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, FileResponse
 from pydantic import BaseModel
@@ -33,9 +33,10 @@ from backend.detection.ids import ids_engine
 from backend.detection.sigma import sigma_engine
 from backend.detection.yara import yara_engine
 from backend.detection.incidents import correlate_alerts_into_incidents, generate_attack_timeline
-from backend.firewall.pf_manager import firewall
+from backend.detection.risk_scoring import risk_scorer
+from backend.firewall import firewall
 from backend.reporting.pdf_gen import generate_incident_report
-from backend.auth import router as auth_router
+from backend.auth import router as auth_router, get_current_user, require_admin, seed_default_users
 from backend.db.database import (
     init_db, get_alerts, save_alert, get_incidents,
 )
@@ -52,7 +53,7 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -73,6 +74,7 @@ recent_packets: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT)
 
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
+main_loop = None
 
 # Packet counter
 packet_counter = {"count": 0}
@@ -119,6 +121,18 @@ def _on_packet(raw_pkt) -> None:
         # Auto-block critical/high threats
         if alert_data.get("cvss_score", 0) >= 7.0:
             firewall.block_ip(alert_data["src_ip"], reason=alert_data["title"])
+        # Update risk scores based on alert type
+        src = alert_data.get("src_ip", "")
+        if src:
+            rule_id = alert_data.get("rule_id", "")
+            if "AI-001" in rule_id:
+                risk_scorer.add_factor(src, "anomalous_volume")
+            elif "AI-002" in rule_id:
+                risk_scorer.add_factor(src, "known_bad_ja3")
+            elif "AI-003" in rule_id:
+                risk_scorer.add_factor(src, "beaconing")
+            elif "IDS-002" in rule_id:
+                risk_scorer.add_factor(src, "cleartext_protocol")
         
     # 2. Flow-level rules (IDS + Threat Intel)
     if flow:
@@ -127,6 +141,16 @@ def _on_packet(raw_pkt) -> None:
             save_alert(**alert_data)
             if alert_data.get("cvss_score", 0) >= 7.0:
                 firewall.block_ip(alert_data["src_ip"], reason=alert_data["title"])
+            # Update risk scores
+            src = alert_data.get("src_ip", "")
+            if src:
+                rule_id = alert_data.get("rule_id", "")
+                if "AI-001" in rule_id:
+                    risk_scorer.add_factor(src, "anomalous_volume")
+                elif "AI-003" in rule_id:
+                    risk_scorer.add_factor(src, "beaconing")
+                elif "IDS-002" in rule_id:
+                    risk_scorer.add_factor(src, "cleartext_protocol")
     
     # If the flow just became suspicious, we should generate an alert
     if flow and getattr(flow, 'is_suspicious', False) and not getattr(flow, '_alerted', False):
@@ -143,6 +167,7 @@ def _on_packet(raw_pkt) -> None:
                 raw_data=flow.to_dict()
             )
             firewall.block_ip(flow.src_ip, reason="Threat Feed Hit")
+            risk_scorer.add_factor(flow.src_ip, "threat_feed_hit")
 
     # Update protocol stats
     proto = record.get("protocol", "Unknown")
@@ -170,17 +195,12 @@ def _broadcast(record: dict[str, Any]) -> None:
         return
 
     # Schedule sends on the event loop
-    disconnected: set[WebSocket] = set()
-    for ws in ws_clients.copy():
-        try:
-            asyncio.get_event_loop().call_soon_threadsafe(
-                asyncio.ensure_future,
-                _safe_send(ws, msg),
-            )
-        except Exception:
-            disconnected.add(ws)
-
-    ws_clients -= disconnected
+    if main_loop and not main_loop.is_closed():
+        for ws in ws_clients.copy():
+            try:
+                asyncio.run_coroutine_threadsafe(_safe_send(ws, msg), main_loop)
+            except Exception:
+                ws_clients.discard(ws)
 
 
 async def _safe_send(ws: WebSocket, msg: str) -> None:
@@ -246,6 +266,7 @@ def start_capture(
     interface: str = "en0",
     bpf_filter: str = "",
     max_packets: int = 0,
+    _user = Depends(require_admin),
 ):
     """Start live packet capture."""
     # Reset state
@@ -266,7 +287,7 @@ def start_capture(
 
 
 @app.post("/api/capture/stop")
-def stop_capture():
+def stop_capture(_user = Depends(require_admin)):
     """Stop live packet capture."""
     return sniffer.stop()
 
@@ -411,6 +432,10 @@ def list_alerts(
     """Get security alerts."""
     return get_alerts(limit=limit, severity=severity if severity else None)
 
+@app.get("/api/risk/scores")
+def get_risk_scores(_user = Depends(get_current_user)):
+    """Get Zero Trust risk scores for all tracked IPs."""
+    return risk_scorer.get_all_scores()
 
 @app.get("/api/incidents")
 def api_get_incidents(limit: int = 50, offset: int = 0):
@@ -428,13 +453,13 @@ def api_get_incident_report(incident_code: str):
     return FileResponse(pdf_path, media_type="application/pdf", filename=f"{incident_code}_Report.pdf")
 
 @app.get("/api/firewall/blocked")
-def get_blocked_ips():
+def get_blocked_ips(_user = Depends(get_current_user)):
     # Return both full entries (with domain) and legacy list
     entries = firewall.get_blocked_entries()
     return {"blocked_ips": firewall.get_blocked_ips(), "entries": entries}
 
 @app.post("/api/firewall/unblock/{ip}")
-def unblock_ip(ip: str):
+def unblock_ip(ip: str, _user = Depends(require_admin)):
     success = firewall.unblock_ip(ip)
     return {"success": success, "ip": ip}
 
@@ -442,7 +467,7 @@ class DomainBlockRequest(BaseModel):
     domain: str
 
 @app.post("/api/firewall/block-domain")
-def block_domain(req: DomainBlockRequest):
+def block_domain(req: DomainBlockRequest, _user = Depends(require_admin)):
     import socket
     try:
         ip_list = socket.gethostbyname_ex(req.domain)[2]
@@ -571,6 +596,7 @@ def lookup_threat(ip: str):
                 "total_reports": vendors_flagged * 3
             }
         },
+        "data_source": "simulated",
         "summary": "Malicious" if vendors_flagged > 0 else "Clean"
     }
 
@@ -592,7 +618,11 @@ async def correlation_loop():
 
 @app.on_event("startup")
 async def startup():
+    global main_loop
+    main_loop = asyncio.get_running_loop()
+    
     init_db()
+    seed_default_users()
     
     # Start background task to update threat feeds
     asyncio.create_task(threat_feeds.auto_update_loop())

@@ -10,8 +10,9 @@ export const AuthProvider = ({ children }) => {
     // Check for saved token
     const token = localStorage.getItem('token');
     const username = localStorage.getItem('username');
+    const role = localStorage.getItem('role');
     if (token && username) {
-      setUser({ token, username });
+      setUser({ token, username, role: role || 'analyst' });
     }
     setLoading(false);
   }, []);
@@ -27,13 +28,15 @@ export const AuthProvider = ({ children }) => {
       });
 
       if (!res.ok) {
-        throw new Error('Invalid credentials');
+        const err = await res.json().catch(() => ({ detail: 'Invalid credentials' }));
+        throw new Error(err.detail || 'Invalid credentials');
       }
 
       const data = await res.json();
       localStorage.setItem('token', data.access_token);
       localStorage.setItem('username', data.username);
-      setUser({ token: data.access_token, username: data.username });
+      localStorage.setItem('role', data.role || 'analyst');
+      setUser({ token: data.access_token, username: data.username, role: data.role || 'analyst' });
       return { success: true };
     } catch (err) {
       return { success: false, error: err.message };
@@ -43,6 +46,7 @@ export const AuthProvider = ({ children }) => {
   const logout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('username');
+    localStorage.removeItem('role');
     setUser(null);
   };
 

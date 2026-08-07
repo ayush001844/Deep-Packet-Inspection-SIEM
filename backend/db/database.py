@@ -102,6 +102,18 @@ class Incident(Base):
     resolved_at = Column(DateTime, nullable=True)
 
 
+class User(Base):
+    """Application user with role-based access."""
+    __tablename__ = "users"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    username = Column(String(64), unique=True, index=True, nullable=False)
+    hashed_password = Column(String(256), nullable=False)
+    role = Column(String(16), default="analyst")  # admin | analyst
+    is_active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ThreatIntelCache(Base):
     """Cache for external threat intelligence lookups."""
     __tablename__ = "threat_intel_cache"

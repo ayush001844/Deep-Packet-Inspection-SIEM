@@ -85,40 +85,59 @@ export default function Threats() {
           </div>
 
           {lookupResult && (
-            <div style={{ 
-              padding: '16px', 
-              borderRadius: '8px', 
-              backgroundColor: lookupResult.summary === 'Malicious' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
-              border: `1px solid ${lookupResult.summary === 'Malicious' ? 'var(--critical)' : 'var(--success)'}`,
-              display: 'flex',
-              gap: '16px'
-            }}>
-              <div style={{ marginTop: '2px' }}>
-                {lookupResult.summary === 'Malicious' 
-                  ? <AlertTriangle size={24} color="var(--critical)" />
-                  : <ShieldCheck size={24} color="var(--success)" />
-                }
-              </div>
-              <div style={{ flex: 1 }}>
-                <h4 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: lookupResult.summary === 'Malicious' ? 'var(--critical)' : 'var(--success)' }}>
-                  {lookupResult.ip} - {lookupResult.summary}
-                </h4>
-                
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '12px' }}>
-                  <div className="card" style={{ padding: '12px' }}>
-                    <div className="text-sm text-muted mb-2 font-medium">Local Feeds (Blocklists)</div>
-                    <div>Hit Count: <strong>{lookupResult.local_feeds.feeds_hit.length}</strong></div>
-                    <div>Score: <strong>{lookupResult.local_feeds.score}/10</strong></div>
-                    {lookupResult.local_feeds.feeds_hit.length > 0 && (
-                      <div className="text-sm mt-1" style={{ color: 'var(--critical)' }}>
-                        Found in: {lookupResult.local_feeds.feeds_hit.join(', ')}
-                      </div>
-                    )}
-                  </div>
-                  <div className="card" style={{ padding: '12px' }}>
-                    <div className="text-sm text-muted mb-2 font-medium">External Intel (Simulated)</div>
-                    <div>VirusTotal: <strong>{lookupResult.external_intel.virustotal.malicious}/{lookupResult.external_intel.virustotal.total}</strong></div>
-                    <div>AbuseIPDB Confidence: <strong>{lookupResult.external_intel.abuseipdb.confidence_score}%</strong></div>
+            <div>
+              {lookupResult.data_source === 'simulated' && (
+                <div style={{
+                  padding: '10px 16px',
+                  marginBottom: '12px',
+                  backgroundColor: 'rgba(245, 158, 11, 0.1)',
+                  border: '1px solid rgba(245, 158, 11, 0.3)',
+                  borderRadius: '8px',
+                  color: '#f59e0b',
+                  fontSize: '0.85rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px'
+                }}>
+                  <AlertTriangle size={16} />
+                  External intel results are simulated. Connect real API keys (VirusTotal, AbuseIPDB) via environment variables for live data.
+                </div>
+              )}
+              <div style={{ 
+                padding: '16px', 
+                borderRadius: '8px', 
+                backgroundColor: lookupResult.summary === 'Malicious' ? 'rgba(239, 68, 68, 0.1)' : 'rgba(16, 185, 129, 0.1)',
+                border: `1px solid ${lookupResult.summary === 'Malicious' ? 'var(--critical)' : 'var(--success)'}`,
+                display: 'flex',
+                gap: '16px'
+              }}>
+                <div style={{ marginTop: '2px' }}>
+                  {lookupResult.summary === 'Malicious' 
+                    ? <AlertTriangle size={24} color="var(--critical)" />
+                    : <ShieldCheck size={24} color="var(--success)" />
+                  }
+                </div>
+                <div style={{ flex: 1 }}>
+                  <h4 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: lookupResult.summary === 'Malicious' ? 'var(--critical)' : 'var(--success)' }}>
+                    {lookupResult.ip} - {lookupResult.summary}
+                  </h4>
+                  
+                  <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '16px', marginTop: '12px' }}>
+                    <div className="card" style={{ padding: '12px' }}>
+                      <div className="text-sm text-muted mb-2 font-medium">Local Feeds (Blocklists)</div>
+                      <div>Hit Count: <strong>{lookupResult.local_feeds.feeds_hit.length}</strong></div>
+                      <div>Score: <strong>{lookupResult.local_feeds.score}/10</strong></div>
+                      {lookupResult.local_feeds.feeds_hit.length > 0 && (
+                        <div className="text-sm mt-1" style={{ color: 'var(--critical)' }}>
+                          Found in: {lookupResult.local_feeds.feeds_hit.join(', ')}
+                        </div>
+                      )}
+                    </div>
+                    <div className="card" style={{ padding: '12px' }}>
+                      <div className="text-sm text-muted mb-2 font-medium">External Intel {lookupResult.data_source === 'simulated' ? '(Simulated)' : ''}</div>
+                      <div>VirusTotal: <strong>{lookupResult.external_intel.virustotal.malicious}/{lookupResult.external_intel.virustotal.total}</strong></div>
+                      <div>AbuseIPDB Confidence: <strong>{lookupResult.external_intel.abuseipdb.confidence_score}%</strong></div>
+                    </div>
                   </div>
                 </div>
               </div>

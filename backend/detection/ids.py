@@ -322,6 +322,10 @@ class IDSEngine:
     """Manages rules and evaluates traffic."""
     
     def __init__(self):
+        from backend.detection.anomaly import AnomalyDetector
+        from backend.detection.ja3_fingerprint import JA3FingerprintRule
+        from backend.detection.beaconing import BeaconingDetector
+
         self.rules = [
             SSHBruteForceRule(),
             CleartextCredentialsRule(),
@@ -331,8 +335,12 @@ class IDSEngine:
             ReverseShellRule(),
             ICMPFloodRule(),
             UnusuallyLargeFlowRule(),
+            # AI-augmented detectors
+            AnomalyDetector(),
+            JA3FingerprintRule(),
+            BeaconingDetector(),
         ]
-        print(f"[IDS] Initialized engine with {len(self.rules)} rules.")
+        print(f"[IDS] Initialized engine with {len(self.rules)} rules (incl. AI-augmented).")
 
     def evaluate_flow(self, flow: Any) -> list[dict[str, Any]]:
         """Run all flow-based rules."""

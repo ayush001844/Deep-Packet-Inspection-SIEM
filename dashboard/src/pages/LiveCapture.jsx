@@ -56,19 +56,12 @@ export default function LiveCapture() {
     clearPackets();
     setCaptureError('');
     try {
-      const res = await fetch(`/api/capture/start?interface=${iface}&bpf_filter=${encodeURIComponent(bpfFilter)}`, {
-        method: 'POST',
-      });
-      if (!res.ok) {
-        const err = await res.json();
-        setCaptureError(err.detail || 'Failed to start capture');
-        return;
-      }
+      await apiPost(`/api/capture/start?interface=${iface}&bpf_filter=${encodeURIComponent(bpfFilter)}`);
       setSelectedIface(iface);
       refetchStatus();
       connect();
     } catch (e) {
-      setCaptureError('Could not reach backend — is it running?');
+      setCaptureError(e.message || 'Could not reach backend — is it running?');
     }
   };
 

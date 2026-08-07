@@ -436,6 +436,16 @@ def parse_packet(pkt, packet_id: int = 0) -> dict[str, Any]:
             if tls_info:
                 tls_layer: dict[str, Any] = {"layer": "TLS", "handshake": "ClientHello"}
                 tls_layer.update(tls_info)
+                
+                # Compute JA3 fingerprint
+                try:
+                    from backend.detection.ja3_fingerprint import compute_ja3_from_raw
+                    ja3_hash = compute_ja3_from_raw(raw_payload)
+                    if ja3_hash:
+                        tls_layer["ja3_hash"] = ja3_hash
+                except Exception:
+                    pass
+                
                 record["layers"].append(tls_layer)
                 record["protocol"] = "TLS"
                 if "sni" in tls_info:

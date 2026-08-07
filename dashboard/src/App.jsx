@@ -3,13 +3,14 @@ import Layout from './components/Layout';
 import Overview from './pages/Overview';
 import LiveCapture from './pages/LiveCapture';
 import Threats from './pages/Threats';
-import Timeline from './pages/Timeline';
+import AttackTimeline from './pages/Timeline';
 import PcapAnalysis from './pages/PcapAnalysis';
 import Rules from './pages/Rules';
 import Incidents from './pages/Incidents';
 import NetworkMap from './pages/NetworkMap';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
+import PacketLog from './pages/PacketLog';
 import { useAuth } from './contexts/AuthContext';
 
 // Placeholder for other pages
@@ -35,11 +36,11 @@ export default function App() {
         <Route path="/" element={<Layout />}>
           <Route index element={<Overview />} />
           <Route path="capture" element={<LiveCapture />} />
-          <Route path="packets" element={<Placeholder title="Packet Log" />} />
+          <Route path="packets" element={<PacketLog />} />
           <Route path="threats" element={<Threats />} />
           <Route path="incidents" element={<Incidents />} />
           <Route path="map" element={<NetworkMap />} />
-          <Route path="timeline" element={<Placeholder title="Attack Timeline" />} />
+          <Route path="timeline" element={<AttackTimeline />} />
           <Route path="pcap" element={<PcapAnalysis />} />
           <Route path="rules" element={<Rules />} />
           <Route path="settings" element={<Settings />} />

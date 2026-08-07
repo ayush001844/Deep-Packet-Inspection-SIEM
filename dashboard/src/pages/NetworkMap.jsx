@@ -6,6 +6,7 @@ import GeoMap from '../components/GeoMap';
 
 export default function NetworkMap() {
   const { data: graphData, loading } = useApi('/api/network/graph', { interval: 5000 });
+  const { data: riskScores } = useApi('/api/risk/scores', { interval: 5000 });
   const [viewMode, setViewMode] = useState('geo'); // 'geo' or 'graph'
   const containerRef = useRef();
   const fgRef = useRef();
@@ -32,6 +33,27 @@ export default function NetworkMap() {
     }
   }, []);
 
+  const rawNodes = graphData?.nodes || [];
+  const links = graphData?.links || [];
+  const isDemo = graphData?.is_demo === true;
+
+  // Create a lookup for risk scores
+  const scoreMap = React.useMemo(() => {
+    const map = {};
+    if (riskScores && Array.isArray(riskScores)) {
+      riskScores.forEach(r => { map[r.ip] = r.score; });
+    }
+    return map;
+  }, [riskScores]);
+
+  // Enrich nodes with risk scores
+  const nodes = React.useMemo(() => {
+    return rawNodes.map(node => ({
+      ...node,
+      riskScore: scoreMap[node.id] || 0
+    }));
+  }, [rawNodes, scoreMap]);
+
   if (loading && !graphData) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: 'calc(100vh - 150px)' }}>
@@ -42,10 +64,6 @@ export default function NetworkMap() {
       </div>
     );
   }
-
-  const nodes = graphData?.nodes || [];
-  const links = graphData?.links || [];
-  const isDemo = graphData?.is_demo === true;
 
   return (
     <div className="fade-in" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column' }}>
@@ -122,7 +140,13 @@ export default function NetworkMap() {
             height={dimensions.height}
             graphData={{ nodes, links }}
             nodeLabel={node => `${node.label || node.id}\n${node.id}`}
-            nodeColor={node => node.group === 1 ? '#ef4444' : '#3b82f6'}
+            nodeColor={node => {
+              if (node.riskScore >= 75) return '#ef4444'; // critical
+              if (node.riskScore >= 50) return '#f97316'; // high
+              if (node.riskScore >= 25) return '#f59e0b'; // medium
+              if (node.group === 1) return '#ef4444'; // legacy
+              return '#3b82f6'; // clean
+            }}
             nodeRelSize={6}
             nodeVal={node => node.val || 1}
             linkColor={link => link.is_suspicious ? '#ef4444' : 'rgba(255,255,255,0.15)'}
@@ -139,9 +163,15 @@ export default function NetworkMap() {
               const r = Math.sqrt(Math.max(0, node.val || 1)) * 4 + 4;
               
               // Draw glow for suspicious
-              if (node.group === 1) {
+              if (node.riskScore >= 75 || node.group === 1) {
                 ctx.shadowColor = '#ef4444';
                 ctx.shadowBlur = 12;
+              } else if (node.riskScore >= 50) {
+                ctx.shadowColor = '#f97316';
+                ctx.shadowBlur = 10;
+              } else if (node.riskScore >= 25) {
+                ctx.shadowColor = '#f59e0b';
+                ctx.shadowBlur = 8;
               }
               
               // Draw circle

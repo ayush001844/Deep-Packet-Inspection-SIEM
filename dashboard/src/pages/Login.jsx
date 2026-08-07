@@ -3,8 +3,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { Lock, User, ShieldAlert } from 'lucide-react';
 
 export default function Login() {
-  const [username, setUsername] = useState('admin');
-  const [password, setPassword] = useState('admin');
+  const [username, setUsername] = useState('');
+  const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const { login } = useAuth();

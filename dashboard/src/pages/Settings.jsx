@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { useApi } from '../hooks/useApi';
+import { useAuth } from '../contexts/AuthContext';
 import { Shield, Server, Settings as SettingsIcon, ShieldOff, Globe, AlertCircle, CheckCircle2 } from 'lucide-react';
 
 export default function Settings() {
   const { data: firewallData, loading, refetch } = useApi('/api/firewall/blocked');
+  const { user } = useAuth();
+  const isAdmin = user?.role === 'admin';
   const [unblocking, setUnblocking] = useState(null);
   const [domainToBlock, setDomainToBlock] = useState('');
   const [isBlocking, setIsBlocking] = useState(false);
@@ -106,6 +109,7 @@ export default function Settings() {
           </div>
 
           {/* Block form */}
+          {isAdmin ? (
           <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)' }}>
             <form onSubmit={handleBlockDomain} style={{ display: 'flex', gap: '10px' }}>
               <div style={{ position: 'relative', flex: 1 }}>
@@ -151,6 +155,13 @@ export default function Settings() {
               </div>
             )}
           </div>
+          ) : (
+          <div style={{ padding: '16px 20px', borderBottom: '1px solid var(--border)', backgroundColor: 'rgba(245,158,11,0.05)' }}>
+            <p style={{ margin: 0, fontSize: '0.9rem', color: '#f59e0b', display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <AlertCircle size={16} /> Admin privileges required to manage firewall rules.
+            </p>
+          </div>
+          )}
 
           {/* Blocked entries table */}
           <div className="table-container">
