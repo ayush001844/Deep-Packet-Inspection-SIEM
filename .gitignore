@@ -1,0 +1,39 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.env
+
+# Node
+node_modules/
+dist/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.eslintcache
+
+# MacOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Packet Analyzer build
+Packet_analyzer/build/
+Packet_analyzer/bin/
+Packet_analyzer/CMakeCache.txt
+Packet_analyzer/CMakeFiles/
+Packet_analyzer/Makefile
+Packet_analyzer/cmake_install.cmake
+
+# Logs / DB
+*.sqlite3
+*.db
+*.log
