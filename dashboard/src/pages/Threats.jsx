@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { useApi, apiPost } from '../hooks/useApi';
-import { ShieldAlert, MapPin, Target, Activity, Search, AlertTriangle, ShieldCheck } from 'lucide-react';
+import { ShieldAlert, MapPin, Target, Activity, Search, AlertTriangle, ShieldCheck, Bot } from 'lucide-react';
 import StatCard from '../components/StatCard';
+import AIAssistantModal from '../components/AIAssistantModal';
 
 export default function Threats() {
   const { data: alerts, loading } = useApi('/api/alerts?limit=50', { interval: 5000 });
@@ -10,6 +11,7 @@ export default function Threats() {
   const [lookupIp, setLookupIp] = useState('');
   const [lookupResult, setLookupResult] = useState(null);
   const [isLookingUp, setIsLookingUp] = useState(false);
+  const [selectedAlert, setSelectedAlert] = useState(null);
 
   if (loading && !alerts) return <div className="empty-state">Loading threat intelligence...</div>;
 
@@ -160,6 +162,7 @@ export default function Threats() {
                 <th>Source IP</th>
                 <th>Target IP</th>
                 <th>Source</th>
+                <th>AI Analysis</th>
               </tr>
             </thead>
             <tbody>
@@ -176,6 +179,15 @@ export default function Threats() {
                     <td className="font-mono text-sm">{alert.src_ip}</td>
                     <td className="font-mono text-sm">{alert.dst_ip}</td>
                     <td className="text-sm text-muted">{alert.source}</td>
+                    <td>
+                      <button 
+                        className="btn btn-sm" 
+                        style={{ display: 'flex', alignItems: 'center', gap: '5px', padding: '4px 8px', fontSize: '0.75rem', backgroundColor: 'rgba(0,255,213,0.1)', color: 'var(--accent)', border: '1px solid var(--accent)' }}
+                        onClick={() => setSelectedAlert(alert)}
+                      >
+                        <Bot size={14} /> Ask AI
+                      </button>
+                    </td>
                   </tr>
                 ))
               ) : (
@@ -191,6 +203,12 @@ export default function Threats() {
           </table>
         </div>
       </div>
+      
+      {/* AI Modal */}
+      <AIAssistantModal 
+        alert={selectedAlert} 
+        onClose={() => setSelectedAlert(null)} 
+      />
     </div>
   );
 }

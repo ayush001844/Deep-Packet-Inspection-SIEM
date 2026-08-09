@@ -43,6 +43,7 @@ from backend.db.database import (
 from backend.detection.classifier import classifier
 from backend.db.elastic import index_packet, index_alert
 from backend.ml.predictor import predictor as ml_predictor
+from backend.ai.assistant import security_assistant
 import backend.mq as mq
 
 # ---------------------------------------------------------------------------
@@ -88,6 +89,7 @@ Packets → Sniffer → DPI Parser → Session Tracker → IDS/ML → Classifier
         {"name": "Risk", "description": "Zero-Trust risk scores for tracked IPs"},
         {"name": "Incidents", "description": "Correlated security incidents and attack timelines"},
         {"name": "ML", "description": "Machine learning model status and recent predictions"},
+        {"name": "AI", "description": "LLM-powered security assistant"},
         {"name": "Auth", "description": "User authentication (JWT-based)"},
         {"name": "System", "description": "Health checks, diagnostics, and system info"},
     ],
@@ -667,6 +669,20 @@ def api_network_graph():
         "links": links,
         "is_demo": False
     }
+
+
+# ---------------------------------------------------------------------------
+# AI Assistant
+# ---------------------------------------------------------------------------
+
+@app.post("/api/ai/explain", tags=["AI"])
+async def explain_alert(alert_data: dict, user=Depends(get_current_user)):
+    """
+    Takes a raw alert dictionary and returns an AI-generated explanation, 
+    mitre context, reasoning, and recommended actions using LangChain.
+    """
+    analysis = security_assistant.analyze_alert(alert_data)
+    return analysis
 
 
 # ---------------------------------------------------------------------------
