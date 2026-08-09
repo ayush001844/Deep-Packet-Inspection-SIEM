@@ -7,15 +7,18 @@ from datetime import datetime
 import os
 import threading
 from typing import Any
-from elasticsearch import Elasticsearch
-
-# Default to elasticsearch service in docker, or localhost if running natively
-ES_HOST = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
-
-# Set timeout and max retries for resilience
-es = Elasticsearch([ES_HOST], request_timeout=10, max_retries=3, retry_on_timeout=True)
+try:
+    from elasticsearch import Elasticsearch
+    # Default to elasticsearch service in docker, or localhost if running natively
+    ES_HOST = os.getenv("ELASTICSEARCH_URL", "http://localhost:9200")
+    # Set timeout and max retries for resilience
+    es = Elasticsearch([ES_HOST], request_timeout=10, max_retries=3, retry_on_timeout=True)
+except ImportError:
+    es = None
 
 def _index_async(index_name: str, document: dict[str, Any]):
+    if not es:
+        return
     try:
         es.index(index=index_name, document=document)
     except Exception as e:

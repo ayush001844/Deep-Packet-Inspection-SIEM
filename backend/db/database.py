@@ -21,12 +21,8 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # Setup
 # ---------------------------------------------------------------------------
 
-# Strictly enforced PostgreSQL connection for enterprise scale
-# Allow SQLite only for testing (set by conftest.py)
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/soc")
-_is_testing = "pytest" in sys.modules or os.getenv("TESTING", "") == "1"
-if "sqlite" in DATABASE_URL and not _is_testing:
-    raise ValueError("SQLite is no longer supported. Please use PostgreSQL.")
+# Default to SQLite for easy local development without Docker
+DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///soc.db")
 
 _engine_kwargs = {"echo": False, "future": True}
 if "sqlite" in DATABASE_URL:
