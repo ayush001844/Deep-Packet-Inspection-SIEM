@@ -144,7 +144,7 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
                 "timestamp": time.time(),
                 "src_ip": flow.src_ip,
                 "dst_ip": flow.dst_ip,
-                "attack_type": ml_result["attack_type"],
+                "attack_type": ml_result["attack"],
                 "confidence": ml_result["confidence"],
                 "is_attack": ml_result["is_attack"]
             })
@@ -153,10 +153,10 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
                 if not getattr(flow, '_ml_alerted', False):
                     flow._ml_alerted = True
                     ml_alert = {
-                        "title": f"ML Detection: {ml_result['attack_type']}",
-                        "description": f"[From PCAP] AI model detected anomalous flow pattern indicative of {ml_result['attack_type']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
+                        "title": f"ML Detection: {ml_result['attack']}",
+                        "description": f"[From PCAP] AI model detected anomalous flow pattern indicative of {ml_result['attack']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
                                        f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
-                        "severity": "critical" if ml_result['confidence'] > 0.95 else "high",
+                        "severity": ml_result["severity"].lower(),
                         "source": "ml_ensemble",
                         "src_ip": flow.src_ip,
                         "dst_ip": flow.dst_ip,

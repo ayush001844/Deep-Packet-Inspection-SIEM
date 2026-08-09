@@ -218,7 +218,7 @@ def _on_packet(raw_pkt) -> None:
                 "timestamp": time.time(),
                 "src_ip": flow.src_ip,
                 "dst_ip": flow.dst_ip,
-                "attack_type": ml_result["attack_type"],
+                "attack_type": ml_result["attack"],
                 "confidence": ml_result["confidence"],
                 "is_attack": ml_result["is_attack"]
             })
@@ -228,10 +228,10 @@ def _on_packet(raw_pkt) -> None:
                 if not getattr(flow, '_ml_alerted', False):
                     flow._ml_alerted = True
                     ml_alert = {
-                        "title": f"ML Detection: {ml_result['attack_type']}",
-                        "description": f"AI model detected anomalous flow pattern indicative of {ml_result['attack_type']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
+                        "title": f"ML Detection: {ml_result['attack']}",
+                        "description": f"AI model detected anomalous flow pattern indicative of {ml_result['attack']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
                                        f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
-                        "severity": "critical" if ml_result['confidence'] > 0.95 else "high",
+                        "severity": ml_result["severity"].lower(),
                         "source": "ml_ensemble",
                         "src_ip": flow.src_ip,
                         "dst_ip": flow.dst_ip,
@@ -246,7 +246,7 @@ def _on_packet(raw_pkt) -> None:
                     
                     risk_scorer.add_factor(flow.src_ip, "ml_high_confidence")
                     if ml_result['confidence'] > 0.95:
-                        firewall.block_ip(flow.src_ip, reason=f"ML Auto-Block ({ml_result['attack_type']})")
+                        firewall.block_ip(flow.src_ip, reason=f"ML Auto-Block ({ml_result['attack']})")
     
     # If the flow just became suspicious, we should generate an alert
     if flow and getattr(flow, 'is_suspicious', False) and not getattr(flow, '_alerted', False):
