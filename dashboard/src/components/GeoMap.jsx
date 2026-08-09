@@ -1,9 +1,9 @@
 import React, { useMemo } from 'react';
-import { ComposableMap, Geographies, Geography, Marker, Line } from 'react-simple-maps';
+import { ComposableMap, Geographies, Geography, Marker, Line, Annotation } from 'react-simple-maps';
 
 const geoUrl = '/features.json';
 
-export default function GeoMap({ nodes, links }) {
+export default function GeoMap({ nodes = [], links = [], alerts = [] }) {
   // We need to filter nodes that actually have valid geo coordinates
   const geoNodes = useMemo(() => {
     return nodes.filter(n => n.geo && n.geo.lat && n.geo.lon);
@@ -25,8 +25,17 @@ export default function GeoMap({ nodes, links }) {
     }).filter(Boolean);
   }, [links, nodes]);
 
+  // Extract alerts with geo data for drawing attack arcs
+  const attackArcs = useMemo(() => {
+    return alerts.filter(a => a.src_geo?.lat && a.dst_geo?.lat).map(alert => ({
+      ...alert,
+      sourceCoordinates: [alert.src_geo.lon, alert.src_geo.lat],
+      targetCoordinates: [alert.dst_geo.lon, alert.dst_geo.lat],
+    }));
+  }, [alerts]);
+
   return (
-    <div style={{ width: '100%', height: '100%', backgroundColor: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden' }}>
+    <div style={{ width: '100%', height: '100%', backgroundColor: '#0a0a0b', display: 'flex', alignItems: 'center', justifyContent: 'center', overflow: 'hidden', position: 'relative' }}>
       <ComposableMap
         projection="geoMercator"
         projectionConfig={{
@@ -53,40 +62,78 @@ export default function GeoMap({ nodes, links }) {
           }
         </Geographies>
 
-        {/* Draw connections (lines) between nodes */}
+        {/* Draw active connection lines */}
         {geoLinks.map((link, i) => (
           <Line
-            key={`line-${i}`}
+            key={`link-${i}`}
             from={link.sourceGeo}
             to={link.targetGeo}
-            stroke={link.is_suspicious ? "#ef4444" : "rgba(59, 130, 246, 0.4)"}
-            strokeWidth={link.is_suspicious ? 1.5 : 0.5}
+            stroke="rgba(59, 130, 246, 0.2)"
+            strokeWidth={0.5}
             strokeLinecap="round"
-            style={{
-              default: { outline: 'none' },
-            }}
+            style={{ default: { outline: 'none' } }}
           />
+        ))}
+
+        {/* Draw Live Attack Arcs */}
+        {attackArcs.map((arc, i) => (
+          <g key={`arc-${i}`}>
+            <Line
+              from={arc.sourceCoordinates}
+              to={arc.targetCoordinates}
+              stroke="#ef4444"
+              strokeWidth={1.5}
+              strokeLinecap="round"
+              className="attack-arc"
+              style={{
+                default: { outline: 'none' },
+              }}
+            />
+            {/* Annotation Label for the Attack */}
+            <Annotation
+              subject={arc.sourceCoordinates}
+              dx={-30}
+              dy={-30}
+              connectorProps={{
+                stroke: "#ef4444",
+                strokeWidth: 1,
+                strokeLinecap: "round"
+              }}
+            >
+              <text x="-8" textAnchor="end" alignmentBaseline="middle" fill="#ef4444" fontSize="10" fontWeight="bold">
+                {arc.src_geo.country}
+              </text>
+              <text x="-8" y="12" textAnchor="end" alignmentBaseline="middle" fill="#fca5a5" fontSize="8">
+                {arc.title || "Attack"}
+              </text>
+            </Annotation>
+          </g>
         ))}
 
         {/* Draw markers for each IP with coordinates */}
         {geoNodes.map((node, i) => (
           <Marker key={`marker-${i}`} coordinates={[node.geo.lon, node.geo.lat]}>
             <circle
-              r={node.group === 1 ? 4 : 2}
-              fill={node.group === 1 ? "#ef4444" : "#3b82f6"}
+              r={2}
+              fill="#3b82f6"
               stroke="#0a0a0b"
               strokeWidth={1}
             />
-            {node.group === 1 && (
-              <circle
-                r={8}
-                fill="none"
-                stroke="#ef4444"
-                strokeWidth={1}
-                className="pulse-animation"
-              />
-            )}
           </Marker>
+        ))}
+
+        {/* Draw markers for Attack Sources and Destinations */}
+        {attackArcs.map((arc, i) => (
+          <React.Fragment key={`attack-markers-${i}`}>
+            <Marker coordinates={arc.sourceCoordinates}>
+              <circle r={4} fill="#ef4444" />
+              <circle r={8} fill="none" stroke="#ef4444" strokeWidth={1} className="pulse-animation" />
+            </Marker>
+            <Marker coordinates={arc.targetCoordinates}>
+              <circle r={4} fill="#f59e0b" />
+              <circle r={8} fill="none" stroke="#f59e0b" strokeWidth={1} className="pulse-animation" />
+            </Marker>
+          </React.Fragment>
         ))}
       </ComposableMap>
       <style>{`
@@ -97,6 +144,16 @@ export default function GeoMap({ nodes, links }) {
         .pulse-animation {
           animation: pulse 2s infinite;
           transform-origin: center;
+        }
+        @keyframes dash {
+          to {
+            stroke-dashoffset: 0;
+          }
+        }
+        .attack-arc {
+          stroke-dasharray: 5, 5;
+          stroke-dashoffset: 20;
+          animation: dash 1s linear infinite;
         }
       `}</style>
     </div>

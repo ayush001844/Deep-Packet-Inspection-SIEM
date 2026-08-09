@@ -163,7 +163,7 @@ export default function Overview() {
             <span className="live-indicator">LIVE</span>
           </div>
           <div style={{ height: 420 }}>
-            <GeoMap nodes={mapNodes} links={mapLinks} />
+            <GeoMap nodes={mapNodes} links={mapLinks} alerts={feedAlerts} />
           </div>
         </div>
 

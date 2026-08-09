@@ -20,25 +20,14 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # Setup
 # ---------------------------------------------------------------------------
 
-DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
-os.makedirs(DB_DIR, exist_ok=True)
-# Default to PostgreSQL, fallback to SQLite for backward compatibility if needed
+# Strictly enforced PostgreSQL connection for enterprise scale
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/soc")
-
+if "sqlite" in DATABASE_URL:
+    raise ValueError("SQLite is no longer supported. Please use PostgreSQL.")
 
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
-
-# SQLite WAL pragmas only applied if using sqlite
-@event.listens_for(engine, "connect")
-def _set_sqlite_pragma(dbapi_connection, connection_record):
-    if "sqlite" in DATABASE_URL:
-        cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.close()
-
 
 # ---------------------------------------------------------------------------
 # Models

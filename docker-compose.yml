@@ -1,4 +1,3 @@
-version: '3.8'
 
 services:
   backend:
@@ -24,6 +23,23 @@ services:
     # We must mount the local uploads/data dir if we want persistence or pcap uploads
     volumes:
       - ./backend/data:/app/data
+
+  detection_worker:
+    build:
+      context: ./backend
+    command: python backend/workers/detection_worker.py
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/soc
+      - ELASTICSEARCH_URL=http://elasticsearch:9200
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_started
+    restart: unless-stopped
+    deploy:
+      replicas: 2
 
   frontend:
     build:
