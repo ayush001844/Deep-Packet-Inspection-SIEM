@@ -11,6 +11,7 @@ import NetworkMap from './pages/NetworkMap';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import PacketLog from './pages/PacketLog';
+import MitreNavigator from './pages/MitreNavigator';
 import { useAuth } from './contexts/AuthContext';
 
 // Placeholder for other pages
@@ -43,6 +44,7 @@ export default function App() {
           <Route path="timeline" element={<AttackTimeline />} />
           <Route path="pcap" element={<PcapAnalysis />} />
           <Route path="rules" element={<Rules />} />
+          <Route path="mitre" element={<MitreNavigator />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

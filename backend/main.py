@@ -34,7 +34,9 @@ from backend.detection.sigma import sigma_engine
 from backend.detection.yara import yara_engine
 from backend.detection.incidents import correlate_alerts_into_incidents, generate_attack_timeline
 from backend.detection.risk_scoring import risk_scorer
+from backend.detection.mitre_navigator import mitre_navigator
 from backend.firewall import firewall
+from backend.response.response_engine import response_engine
 from backend.reporting.pdf_gen import generate_incident_report
 from backend.auth import router as auth_router, get_current_user, require_admin, seed_default_users
 from backend.db.database import (
@@ -44,6 +46,7 @@ from backend.detection.classifier import classifier
 from backend.db.elastic import index_packet, index_alert
 from backend.ml.predictor import predictor as ml_predictor
 from backend.ai.assistant import security_assistant
+from backend.rate_limiter import RateLimiterMiddleware, SecurityHeadersMiddleware
 import backend.mq as mq
 
 # ---------------------------------------------------------------------------
@@ -85,15 +88,21 @@ Packets → Sniffer → DPI Parser → Session Tracker → IDS/ML → Classifier
         {"name": "Alerts", "description": "View IDS, ML, and rule-based threat alerts"},
         {"name": "PCAP", "description": "Upload and analyze .pcap/.pcapng files with threat intelligence"},
         {"name": "Firewall", "description": "Manage IP block/unblock rules and domain filtering"},
+        {"name": "Response", "description": "Automated response engine actions and configuration"},
+        {"name": "MITRE", "description": "MITRE ATT&CK Navigator matrix and coverage"},
         {"name": "Network", "description": "Network topology graph with geo-located nodes"},
         {"name": "Risk", "description": "Zero-Trust risk scores for tracked IPs"},
         {"name": "Incidents", "description": "Correlated security incidents and attack timelines"},
         {"name": "ML", "description": "Machine learning model status and recent predictions"},
         {"name": "AI", "description": "LLM-powered security assistant"},
-        {"name": "Auth", "description": "User authentication (JWT-based)"},
+        {"name": "Auth", "description": "User authentication (JWT + API key)"},
         {"name": "System", "description": "Health checks, diagnostics, and system info"},
     ],
 )
+
+# Security middleware (Upgrade 8)
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(RateLimiterMiddleware, enabled=os.getenv("RATE_LIMIT_ENABLED", "true").lower() == "true")
 
 app.add_middleware(
     CORSMiddleware,
@@ -476,6 +485,58 @@ def block_domain(req: DomainBlockRequest, _user = Depends(require_admin)):
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to resolve or block domain: {str(e)}")
 
+
+# ---------------------------------------------------------------------------
+# REST endpoints – Automated Response Engine (Upgrade 6)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/response/actions", tags=["Response"])
+def get_response_actions(limit: int = 50, _user = Depends(get_current_user)):
+    """Get recent automated response actions."""
+    return response_engine.get_recent_actions(limit=limit)
+
+@app.get("/api/response/config", tags=["Response"])
+def get_response_config(_user = Depends(require_admin)):
+    """Get current response engine configuration."""
+    return response_engine.get_config()
+
+class ResponseConfigUpdate(BaseModel):
+    enabled: bool | None = None
+    threshold_full: int | None = None
+    threshold_partial: int | None = None
+    cooldown_seconds: int | None = None
+
+@app.post("/api/response/config", tags=["Response"])
+def update_response_config(config: ResponseConfigUpdate, _user = Depends(require_admin)):
+    """Update response engine configuration."""
+    updates = {k: v for k, v in config.model_dump().items() if v is not None}
+    return response_engine.update_config(updates)
+
+@app.post("/api/response/reverse/{action_id}", tags=["Response"])
+def reverse_response_action(action_id: int, _user = Depends(require_admin)):
+    """Reverse a previously executed automated action."""
+    return response_engine.reverse_action(action_id, reversed_by=_user.username)
+
+@app.get("/api/response/notifications", tags=["Response"])
+def get_response_notifications(limit: int = 20, _user = Depends(get_current_user)):
+    """Get analyst notifications from the response engine."""
+    return response_engine.get_notifications(limit=limit)
+
+
+# ---------------------------------------------------------------------------
+# REST endpoints – MITRE ATT&CK Navigator (Upgrade 7)
+# ---------------------------------------------------------------------------
+
+@app.get("/api/mitre/matrix", tags=["MITRE"])
+def get_mitre_matrix(_user = Depends(get_current_user)):
+    """Get the full MITRE ATT&CK matrix with detection heatmap."""
+    return mitre_navigator.get_matrix()
+
+@app.get("/api/mitre/coverage", tags=["MITRE"])
+def get_mitre_coverage(_user = Depends(get_current_user)):
+    """Get per-tactic coverage statistics."""
+    return mitre_navigator.get_coverage()
+
 @app.get("/api/network/graph")
 def api_network_graph():
     """Generates a node/link graph of current active sessions for visualization."""
@@ -633,15 +694,35 @@ def get_ml_recent(_user = Depends(get_current_user)):
     return list(recent_ml_alerts)[::-1][:20]
 
 async def correlation_loop():
-    """Periodically group alerts into incidents."""
+    """Periodically group alerts into incidents and trigger automated responses."""
     while True:
         try:
             # Run the synchronous db correlation in an executor
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(None, correlate_alerts_into_incidents)
+
+            # Run automated response evaluation (Upgrade 6)
+            await loop.run_in_executor(None, _run_auto_response)
         except Exception as e:
             print(f"Error in correlation loop: {e}")
         await asyncio.sleep(10)  # Check every 10 seconds
+
+
+def _run_auto_response() -> None:
+    """Evaluate all tracked IPs and trigger automated responses if thresholds are met."""
+    try:
+        all_scores = risk_scorer.get_all_scores()
+        for entry in all_scores:
+            ip = entry["ip"]
+            score = entry["score"]
+            if score >= response_engine.config.get("threshold_partial", 75):
+                response_engine.evaluate_and_respond(
+                    ip=ip,
+                    risk_score=score,
+                    classification=entry.get("level", ""),
+                )
+    except Exception as e:
+        print(f"[ResponseEngine] Auto-response evaluation error: {e}")
 
 @app.on_event("startup")
 async def startup():
@@ -682,9 +763,11 @@ async def startup():
     mq.subscribe(mq.CHANNEL_ALERTS, _on_mq_alert)
     
     print("\n" + "=" * 60)
-    print("  PacketAnalyzer-Pro  v2.0.0")
+    print("  DeepGuard  v3.0.0")
     print("  SOC/SIEM Backend Ready")
     print("  MQ: " + ("Redis" if mq.is_redis_available() else "In-Memory"))
+    print("  Response Engine: " + ("ENABLED" if response_engine.config["enabled"] else "DISABLED"))
+    print("  Rate Limiting: " + os.getenv("RATE_LIMIT_ENABLED", "true"))
     print("=" * 60)
     print(f"  Swagger UI:  http://localhost:8000/docs")
     print(f"  WebSocket:   ws://localhost:8000/ws/packets")

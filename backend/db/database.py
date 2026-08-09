@@ -7,6 +7,7 @@ Stores packets, alerts, incidents, and threat intel cache.
 from __future__ import annotations
 
 import os
+import sys
 from datetime import datetime
 from typing import Any, Optional
 
@@ -21,11 +22,17 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # ---------------------------------------------------------------------------
 
 # Strictly enforced PostgreSQL connection for enterprise scale
+# Allow SQLite only for testing (set by conftest.py)
 DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/soc")
-if "sqlite" in DATABASE_URL:
+_is_testing = "pytest" in sys.modules or os.getenv("TESTING", "") == "1"
+if "sqlite" in DATABASE_URL and not _is_testing:
     raise ValueError("SQLite is no longer supported. Please use PostgreSQL.")
 
-engine = create_engine(DATABASE_URL, echo=False, future=True)
+_engine_kwargs = {"echo": False, "future": True}
+if "sqlite" in DATABASE_URL:
+    _engine_kwargs["connect_args"] = {"check_same_thread": False}
+
+engine = create_engine(DATABASE_URL, **_engine_kwargs)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
@@ -132,6 +139,51 @@ class IOCEntry(Base):
     is_active = Column(Boolean, default=True)
     match_count = Column(Integer, default=0)
     last_matched = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class ResponseAction(Base):
+    """Audit log for automated response actions (Upgrade 6)."""
+    __tablename__ = "response_actions"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    action_type = Column(String(32), index=True)  # block_ip, isolate_host, disable_account, create_incident
+    target = Column(String(256))  # IP, hostname, username
+    reason = Column(Text)
+    risk_score = Column(Float)
+    incident_id = Column(String(16), nullable=True)  # linked INC-XXXX
+    status = Column(String(16), default="executed")  # executed, reversed, failed
+    reversed_at = Column(DateTime, nullable=True)
+    reversed_by = Column(String(64), nullable=True)
+    action_metadata = Column(JSON, default=dict)  # extra context
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class RefreshToken(Base):
+    """JWT refresh tokens for token rotation (Upgrade 8)."""
+    __tablename__ = "refresh_tokens"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    token_hash = Column(String(256), unique=True, index=True, nullable=False)
+    username = Column(String(64), index=True, nullable=False)
+    expires_at = Column(DateTime, nullable=False)
+    is_revoked = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class APIKey(Base):
+    """API keys for programmatic access (Upgrade 8)."""
+    __tablename__ = "api_keys"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    key_hash = Column(String(256), unique=True, index=True, nullable=False)
+    key_prefix = Column(String(8), nullable=False)  # first 8 chars for identification
+    label = Column(String(128), nullable=False)
+    username = Column(String(64), index=True, nullable=False)
+    scopes = Column(JSON, default=list)  # ["read", "write", "admin"]
+    is_active = Column(Boolean, default=True)
+    last_used = Column(DateTime, nullable=True)
+    expires_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 

@@ -1,4 +1,4 @@
-FROM python:3.10-slim
+FROM python:3.10-slim AS builder
 
 WORKDIR /app
 
@@ -13,13 +13,35 @@ RUN apt-get update && apt-get install -y \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy backend source code
-# We copy the contents of the backend folder into /app/backend to maintain module paths
-# But wait, main.py is run as `uvicorn backend.main:app`. This means `/app` must contain `backend` directory.
-# Let's set the workdir to /app, and copy the whole backend directory into /app/backend
+# --- Final stage ---
+FROM python:3.10-slim
+
+# Install runtime-only dependencies
+RUN apt-get update && apt-get install -y \
+    libpcap-dev \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && groupadd -r appuser && useradd -r -g appuser -s /sbin/nologin appuser
+
 WORKDIR /app
+
+# Copy installed Python packages from builder
+COPY --from=builder /usr/local/lib/python3.10/site-packages /usr/local/lib/python3.10/site-packages
+COPY --from=builder /usr/local/bin /usr/local/bin
+
+# Copy backend source code
 COPY . /app/backend
 
+# Create data directory with proper permissions
+RUN mkdir -p /app/backend/data/uploads && chown -R appuser:appuser /app
+
+# Switch to non-root user (Upgrade 8)
+# NOTE: Packet capture requires NET_RAW capability, which is granted via docker-compose cap_add
+USER appuser
+
+# Health check
+HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/health || exit 1
+
 # The command to run the application
-# We need to run it from /app so python can find the `backend` module
 CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000"]

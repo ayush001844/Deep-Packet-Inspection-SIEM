@@ -12,6 +12,7 @@ const navItems = [
   { label: 'Incidents', path: '/incidents', icon: AlertTriangle },
   { label: 'Network Map', path: '/map', icon: Map },
   { label: 'Timeline', path: '/timeline', icon: Clock },
+  { label: 'ATT&CK Matrix', path: '/mitre', icon: Box },
   { label: 'PCAP Analysis', path: '/pcap', icon: FileBarChart },
   { label: 'Rules Engine', path: '/rules', icon: FileText },
   { label: 'Settings', path: '/settings', icon: Settings },
@@ -53,7 +54,7 @@ export default function Sidebar() {
         ))}
         
         <div className="sidebar-section-label" style={{marginTop: 16}}>Security</div>
-        {navItems.slice(3, 7).map(item => (
+        {navItems.slice(3, 8).map(item => (
           <NavLink 
             key={item.path} 
             to={item.path} 
@@ -65,7 +66,7 @@ export default function Sidebar() {
         ))}
         
         <div className="sidebar-section-label" style={{marginTop: 16}}>Tools</div>
-        {navItems.slice(7).map(item => (
+        {navItems.slice(8).map(item => (
           <NavLink 
             key={item.path} 
             to={item.path} 
