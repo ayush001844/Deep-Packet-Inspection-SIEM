@@ -22,20 +22,22 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 DB_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data")
 os.makedirs(DB_DIR, exist_ok=True)
-DB_PATH = os.path.join(DB_DIR, "soc.db")
-DATABASE_URL = f"sqlite:///{DB_PATH}"
+# Default to PostgreSQL, fallback to SQLite for backward compatibility if needed
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://postgres:postgres@localhost:5432/soc")
+
 
 engine = create_engine(DATABASE_URL, echo=False, future=True)
 SessionLocal = sessionmaker(bind=engine, expire_on_commit=False)
 Base = declarative_base()
 
-# Enable WAL mode for better concurrency
+# SQLite WAL pragmas only applied if using sqlite
 @event.listens_for(engine, "connect")
 def _set_sqlite_pragma(dbapi_connection, connection_record):
-    cursor = dbapi_connection.cursor()
-    cursor.execute("PRAGMA journal_mode=WAL")
-    cursor.execute("PRAGMA synchronous=NORMAL")
-    cursor.close()
+    if "sqlite" in DATABASE_URL:
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
 
 
 # ---------------------------------------------------------------------------
@@ -66,6 +68,7 @@ class Alert(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     timestamp = Column(Float, index=True)
     severity = Column(String(16), index=True)  # critical, high, medium, low, info
+    classification = Column(String(128))       # Real-time attack classification
     title = Column(String(256))
     description = Column(Text)
     source = Column(String(32))  # ids, ioc, sigma, yara
@@ -164,6 +167,7 @@ def save_alert(
     source: str = "ids",
     mitre_technique: str = "",
     mitre_tactic: str = "",
+    classification: str = "",
     src_ip: str = "",
     dst_ip: str = "",
     cvss_score: float = 0.0,
@@ -179,6 +183,7 @@ def save_alert(
             severity=severity,
             title=title,
             description=description,
+            classification=classification,
             source=source,
             mitre_technique=mitre_technique,
             mitre_tactic=mitre_tactic,
@@ -209,6 +214,7 @@ def get_alerts(limit: int = 100, severity: Optional[str] = None) -> list[dict[st
                 "id": a.id,
                 "timestamp": a.timestamp,
                 "severity": a.severity,
+                "classification": a.classification,
                 "title": a.title,
                 "description": a.description,
                 "source": a.source,

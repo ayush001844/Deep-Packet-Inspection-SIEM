@@ -16,6 +16,12 @@ from scapy.all import rdpcap, PcapReader as ScapyPcapReader
 
 from backend.dpi.protocol_parser import parse_packet
 from backend.dpi.session_tracker import SessionTracker
+from backend.ml.predictor import predictor as ml_predictor
+from backend.detection.ids import ids_engine
+from backend.db.database import save_alert
+from backend.detection.risk_scoring import risk_scorer
+from backend.detection.classifier import classifier
+from backend.firewall import firewall
 
 
 def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
@@ -116,6 +122,51 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
     # Session summaries
     sessions = tracker.get_flows()
     flow_stats = tracker.get_stats()
+    
+    # Run ML and IDS on all completed flows from the PCAP
+    pcap_alerts = []  # Collect all alerts for threat summary
+    for flow in tracker._flows.values():
+        # Run IDS rules
+        flow_alerts = ids_engine.evaluate_flow(flow)
+        for alert_data in flow_alerts:
+            alert_data = classifier.classify(alert_data)
+            save_alert(**alert_data)
+            pcap_alerts.append(alert_data)
+            
+        # Run ML Inference
+        if ml_predictor.is_loaded and getattr(flow, 'total_packets', 0) > 3:
+            ml_result = ml_predictor.predict_flow(flow)
+            
+            # Format prediction for the dashboard feed
+            # (We import recent_ml_alerts dynamically to avoid circular import)
+            from backend.main import recent_ml_alerts
+            recent_ml_alerts.append({
+                "timestamp": time.time(),
+                "src_ip": flow.src_ip,
+                "dst_ip": flow.dst_ip,
+                "attack_type": ml_result["attack_type"],
+                "confidence": ml_result["confidence"],
+                "is_attack": ml_result["is_attack"]
+            })
+            
+            if ml_result["is_attack"] and ml_result["confidence"] > 0.85:
+                if not getattr(flow, '_ml_alerted', False):
+                    flow._ml_alerted = True
+                    ml_alert = {
+                        "title": f"ML Detection: {ml_result['attack_type']}",
+                        "description": f"[From PCAP] AI model detected anomalous flow pattern indicative of {ml_result['attack_type']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
+                                       f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
+                        "severity": "critical" if ml_result['confidence'] > 0.95 else "high",
+                        "source": "ml_ensemble",
+                        "src_ip": flow.src_ip,
+                        "dst_ip": flow.dst_ip,
+                        "cvss_score": 8.0,
+                        "raw_data": ml_result
+                    }
+                    ml_alert = classifier.classify(ml_alert)
+                    save_alert(**ml_alert)
+                    pcap_alerts.append(ml_alert)
+                    risk_scorer.add_factor(flow.src_ip, "ml_high_confidence")
 
     # DNS queries summary
     dns_queries: list[dict[str, str]] = []
@@ -158,6 +209,81 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
                     "timestamp": pkt.get("timestamp", 0),
                 })
 
+    # ── Threat Intelligence Summary ──
+    suspicious_count = len(pcap_alerts)
+    critical_count = sum(1 for a in pcap_alerts if a.get("severity") == "critical")
+    high_count = sum(1 for a in pcap_alerts if a.get("severity") == "high")
+
+    # Build risk indicators from alerts
+    risk_indicators = []
+    seen_classifications = set()
+    for a in pcap_alerts:
+        cls = a.get("classification", "")
+        if cls and cls not in seen_classifications:
+            seen_classifications.add(cls)
+            risk_indicators.append({
+                "classification": cls,
+                "mitre_technique": a.get("mitre_technique", ""),
+                "mitre_tactic": a.get("mitre_tactic", ""),
+                "severity": a.get("severity", "medium"),
+                "title": a.get("title", ""),
+            })
+
+    # Determine overall threat verdict
+    if critical_count > 0:
+        threat_verdict = "Critical Threat Detected"
+    elif high_count > 2:
+        threat_verdict = "Possible Botnet / C2 Activity"
+    elif high_count > 0:
+        threat_verdict = "Suspicious Activity Detected"
+    elif suspicious_count > 0:
+        threat_verdict = "Low-Level Anomalies Found"
+    else:
+        threat_verdict = "Clean Traffic"
+
+    # Top talkers with threat assessment
+    top_talkers = []
+    alert_ips = Counter()
+    for a in pcap_alerts:
+        src = a.get("src_ip", "")
+        if src:
+            alert_ips[src] += 1
+
+    for ep in endpoints[:5]:
+        ip = ep["ip"]
+        alert_count = alert_ips.get(ip, 0)
+        if alert_count > 2:
+            verdict = "Malicious"
+        elif alert_count > 0:
+            verdict = "Suspicious"
+        else:
+            verdict = "Clean"
+        top_talkers.append({
+            **ep,
+            "alert_count": alert_count,
+            "threat_verdict": verdict,
+        })
+
+    threat_summary = {
+        "threat_verdict": threat_verdict,
+        "suspicious_count": suspicious_count,
+        "critical_count": critical_count,
+        "high_count": high_count,
+        "risk_indicators": risk_indicators,
+        "top_talkers": top_talkers,
+        "alerts": [
+            {
+                "title": a.get("title", ""),
+                "severity": a.get("severity", ""),
+                "classification": a.get("classification", ""),
+                "mitre_technique": a.get("mitre_technique", ""),
+                "src_ip": a.get("src_ip", ""),
+                "dst_ip": a.get("dst_ip", ""),
+            }
+            for a in pcap_alerts[:20]
+        ],
+    }
+
     return {
         "file": os.path.basename(filepath),
         "total_packets": pkt_id,
@@ -171,4 +297,5 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
         "dns_queries": dns_queries[:100],
         "http_requests": http_requests[:100],
         "tls_connections": tls_connections[:100],
+        "threat_summary": threat_summary,
     }

@@ -1,5 +1,18 @@
 import React, { useState, useRef } from 'react';
-import { UploadCloud, File, AlertCircle, CheckCircle, Activity, Server, FileText } from 'lucide-react';
+import { UploadCloud, AlertCircle, CheckCircle, Activity, Server, Shield, AlertTriangle, Target, Crosshair } from 'lucide-react';
+import {
+  PieChart, Pie, Cell, ResponsiveContainer, Tooltip
+} from 'recharts';
+
+const PROTO_COLORS = ['#3b82f6', '#10b981', '#8b5cf6', '#f59e0b', '#ef4444', '#06b6d4', '#ec4899'];
+
+const VERDICT_STYLES = {
+  'Critical Threat Detected': { class: 'verdict-critical', color: 'var(--critical)', icon: AlertCircle },
+  'Possible Botnet / C2 Activity': { class: 'verdict-high', color: 'var(--high)', icon: AlertTriangle },
+  'Suspicious Activity Detected': { class: 'verdict-high', color: 'var(--high)', icon: AlertTriangle },
+  'Low-Level Anomalies Found': { class: 'verdict-medium', color: 'var(--medium)', icon: Target },
+  'Clean Traffic': { class: 'verdict-clean', color: 'var(--success)', icon: CheckCircle },
+};
 
 export default function PcapAnalysis() {
   const [file, setFile] = useState(null);
@@ -67,15 +80,19 @@ export default function PcapAnalysis() {
     }
   };
 
+  const ts = results?.threat_summary;
+  const verdictStyle = ts ? (VERDICT_STYLES[ts.threat_verdict] || VERDICT_STYLES['Clean Traffic']) : null;
+  const VerdictIcon = verdictStyle?.icon || CheckCircle;
+
   return (
-    <div className="fade-in" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', gap: '20px' }}>
+    <div className="fade-in" style={{ height: 'calc(100vh - 120px)', display: 'flex', flexDirection: 'column', gap: '20px', overflowY: 'auto' }}>
       
       {!results ? (
         <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
           <div style={{ textAlign: 'center', maxWidth: '600px' }}>
-            <h2 style={{ fontSize: '1.75rem', marginBottom: '10px' }}>PCAP File Analysis</h2>
+            <h2 style={{ fontSize: '1.75rem', marginBottom: '10px' }}>PCAP Intelligence Analysis</h2>
             <p className="text-muted" style={{ marginBottom: '30px' }}>
-              Upload a .pcap or .pcapng file to run it through the deep packet inspection engine.
+              Upload a .pcap or .pcapng file for deep threat analysis with MITRE ATT&CK mapping.
             </p>
 
             <div 
@@ -141,6 +158,7 @@ export default function PcapAnalysis() {
         </div>
       ) : (
         <>
+          {/* ── Analysis Complete Banner ── */}
           <div className="card" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '20px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '15px' }}>
               <div style={{ padding: '12px', backgroundColor: 'rgba(16, 185, 129, 0.1)', borderRadius: '12px', color: '#10b981' }}>
@@ -149,7 +167,7 @@ export default function PcapAnalysis() {
               <div>
                 <h3 style={{ margin: '0 0 5px 0' }}>Analysis Complete</h3>
                 <p className="text-sm text-muted" style={{ margin: 0 }}>
-                  Processed <strong>{results.total_packets}</strong> packets from {results.file} in {results.analysis_time_seconds}s
+                  Processed <strong>{results.total_packets?.toLocaleString()}</strong> packets from {results.file} in {results.analysis_time_seconds}s
                 </p>
               </div>
             </div>
@@ -158,37 +176,118 @@ export default function PcapAnalysis() {
             </button>
           </div>
 
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
-            {/* Protocol Hierarchy */}
-            <div className="card">
-              <div className="card-header"><h3 className="card-title">Protocol Hierarchy</h3></div>
-              <table style={{ width: '100%', marginTop: '10px' }}>
-                <thead>
-                  <tr>
-                    <th style={{ textAlign: 'left', padding: '10px', color: 'var(--text-muted)' }}>Protocol</th>
-                    <th style={{ textAlign: 'right', padding: '10px', color: 'var(--text-muted)' }}>Packets</th>
-                    <th style={{ textAlign: 'right', padding: '10px', color: 'var(--text-muted)' }}>%</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {results.protocol_hierarchy.map((proto, i) => (
-                    <tr key={i} style={{ borderBottom: '1px solid var(--border)' }}>
-                      <td style={{ padding: '10px' }}>
-                        <span className={`proto-badge ${proto.protocol.toLowerCase()}`}>{proto.protocol}</span>
-                      </td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>{proto.count}</td>
-                      <td style={{ padding: '10px', textAlign: 'right' }}>
-                        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: '10px' }}>
-                          <div style={{ width: '60px', height: '6px', backgroundColor: 'var(--bg-secondary)', borderRadius: '3px', overflow: 'hidden' }}>
-                            <div style={{ width: `${proto.percentage}%`, height: '100%', backgroundColor: 'var(--primary)' }}></div>
-                          </div>
-                          {proto.percentage}%
+          {/* ── Threat Intelligence Summary ── */}
+          {ts && (
+            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: '20px' }}>
+              {/* Verdict Card */}
+              <div className={`threat-verdict-card ${verdictStyle.class}`}>
+                <VerdictIcon size={40} color={verdictStyle.color} style={{ marginBottom: 12 }} />
+                <h3 style={{ margin: '0 0 8px 0', fontSize: '1.1rem', color: verdictStyle.color }}>{ts.threat_verdict}</h3>
+                <p className="text-muted text-sm" style={{ margin: 0 }}>
+                  {ts.suspicious_count} suspicious events • {ts.critical_count} critical • {ts.high_count} high
+                </p>
+              </div>
+
+              {/* Risk Indicators */}
+              <div className="card" style={{ padding: '20px' }}>
+                <h4 style={{ margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Crosshair size={16} color="var(--high)" />
+                  Risk Indicators
+                </h4>
+                {ts.risk_indicators && ts.risk_indicators.length > 0 ? (
+                  ts.risk_indicators.slice(0, 4).map((ri, i) => (
+                    <div key={i} className="risk-indicator-item">
+                      <span className={`severity-badge ${ri.severity}`} style={{ fontSize: '0.65rem' }}>
+                        {ri.severity?.toUpperCase()}
+                      </span>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: '0.85rem', fontWeight: 500 }}>{ri.classification}</div>
+                        {ri.mitre_technique && (
+                          <span className="text-muted text-sm" style={{ fontFamily: 'JetBrains Mono, monospace' }}>
+                            {ri.mitre_technique} • {ri.mitre_tactic}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-muted text-sm">No risk indicators found</p>
+                )}
+              </div>
+
+              {/* Top Talkers */}
+              <div className="card" style={{ padding: '20px' }}>
+                <h4 style={{ margin: '0 0 14px 0', display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <Shield size={16} color="var(--accent)" />
+                  Top Talkers
+                </h4>
+                {ts.top_talkers && ts.top_talkers.length > 0 ? (
+                  ts.top_talkers.map((tt, i) => {
+                    const maxBytes = ts.top_talkers[0]?.total_bytes || 1;
+                    const pct = Math.round((tt.total_bytes / maxBytes) * 100);
+                    const barColor = tt.threat_verdict === 'Malicious' ? 'var(--critical)' 
+                      : tt.threat_verdict === 'Suspicious' ? 'var(--high)' : 'var(--accent)';
+                    return (
+                      <div key={i} style={{ marginBottom: 10 }}>
+                        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                          <span style={{ fontFamily: 'JetBrains Mono, monospace', fontSize: '0.8rem' }}>{tt.ip}</span>
+                          <span className={`severity-badge ${tt.threat_verdict === 'Malicious' ? 'critical' : tt.threat_verdict === 'Suspicious' ? 'high' : 'low'}`}
+                            style={{ fontSize: '0.6rem' }}>
+                            {tt.threat_verdict}
+                          </span>
                         </div>
-                      </td>
-                    </tr>
+                        <div className="top-talker-bar">
+                          <div className="top-talker-bar-fill" style={{ width: `${pct}%`, backgroundColor: barColor }} />
+                        </div>
+                      </div>
+                    );
+                  })
+                ) : (
+                  <p className="text-muted text-sm">No endpoint data</p>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* ── Protocol Hierarchy (Pie Chart) + Endpoints ── */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '20px' }}>
+            {/* Protocol Pie Chart */}
+            <div className="card">
+              <div className="card-header"><h3 className="card-title">Protocol Distribution</h3></div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '20px', padding: '10px 0' }}>
+                <div style={{ width: 200, height: 200 }}>
+                  <ResponsiveContainer width="100%" height="100%">
+                    <PieChart>
+                      <Pie
+                        data={results.protocol_hierarchy}
+                        dataKey="count"
+                        nameKey="protocol"
+                        cx="50%"
+                        cy="50%"
+                        innerRadius={50}
+                        outerRadius={85}
+                        paddingAngle={2}
+                      >
+                        {results.protocol_hierarchy.map((_, i) => (
+                          <Cell key={i} fill={PROTO_COLORS[i % PROTO_COLORS.length]} />
+                        ))}
+                      </Pie>
+                      <Tooltip 
+                        contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderRadius: 8, fontSize: '0.85rem' }}
+                      />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+                <div style={{ flex: 1 }}>
+                  {results.protocol_hierarchy.map((proto, i) => (
+                    <div key={i} style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 6 }}>
+                      <div style={{ width: 10, height: 10, borderRadius: 2, backgroundColor: PROTO_COLORS[i % PROTO_COLORS.length], flexShrink: 0 }} />
+                      <span style={{ flex: 1, fontSize: '0.85rem' }}>{proto.protocol}</span>
+                      <span className="text-muted text-sm" style={{ fontFamily: 'JetBrains Mono, monospace' }}>{proto.percentage}%</span>
+                    </div>
                   ))}
-                </tbody>
-              </table>
+                </div>
+              </div>
             </div>
 
             {/* Top Endpoints */}
@@ -213,6 +312,56 @@ export default function PcapAnalysis() {
                 </tbody>
               </table>
             </div>
+
+            {/* PCAP Alerts Table */}
+            {ts && ts.alerts && ts.alerts.length > 0 && (
+              <div className="card" style={{ gridColumn: '1 / -1' }}>
+                <div className="card-header">
+                  <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                    <AlertTriangle size={16} color="var(--high)" />
+                    Detected Threats ({ts.alerts.length})
+                  </h3>
+                </div>
+                <div className="table-container" style={{ maxHeight: 300, overflowY: 'auto' }}>
+                  <table>
+                    <thead>
+                      <tr>
+                        <th>Severity</th>
+                        <th>Classification</th>
+                        <th>Alert</th>
+                        <th>MITRE</th>
+                        <th>Source IP</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {ts.alerts.map((a, i) => (
+                        <tr key={i}>
+                          <td>
+                            <span className={`severity-badge ${(a.severity || '').toLowerCase()}`}>
+                              {(a.severity || '').toUpperCase()}
+                            </span>
+                          </td>
+                          <td className="font-medium">{a.classification || '—'}</td>
+                          <td>{a.title}</td>
+                          <td>
+                            {a.mitre_technique && (
+                              <span className="mitre-badge" style={{
+                                fontSize: '0.7rem', fontWeight: 600, padding: '2px 8px', borderRadius: 4,
+                                background: 'hsla(210, 100%, 55%, 0.12)', color: 'var(--accent)',
+                                fontFamily: 'JetBrains Mono, monospace'
+                              }}>
+                                {a.mitre_technique}
+                              </span>
+                            )}
+                          </td>
+                          <td className="font-mono text-sm">{a.src_ip}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
             
             {/* DNS Queries */}
             {results.dns_queries && results.dns_queries.length > 0 && (

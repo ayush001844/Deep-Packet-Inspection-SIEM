@@ -40,15 +40,57 @@ from backend.auth import router as auth_router, get_current_user, require_admin,
 from backend.db.database import (
     init_db, get_alerts, save_alert, get_incidents,
 )
+from backend.detection.classifier import classifier
+from backend.db.elastic import index_packet, index_alert
+from backend.ml.predictor import predictor as ml_predictor
+import backend.mq as mq
 
 # ---------------------------------------------------------------------------
 # App setup
 # ---------------------------------------------------------------------------
 
 app = FastAPI(
-    title="PacketAnalyzer-Pro",
-    description="Enterprise SOC/SIEM Platform – Deep Packet Inspection & Threat Intelligence",
-    version="1.0.0",
+    title="DeepGuard – AI-Powered SIEM",
+    description="""
+## 🛡️ DeepGuard – Deep Packet Inspection & SIEM Platform
+
+An enterprise-grade Security Information and Event Management (SIEM) system featuring:
+
+- **Real-time Packet Capture** via Scapy with WebSocket streaming
+- **Deep Packet Inspection** across 15+ protocols (TCP, UDP, DNS, HTTP, TLS, SSH, ICMP, etc.)
+- **AI/ML Threat Detection** using XGBoost + Random Forest ensemble models
+- **Intrusion Detection System (IDS)** with MITRE ATT&CK mapped rules
+- **PCAP Intelligence** analysis with threat scoring and risk indicators
+- **Zero-Trust Risk Scoring** per IP with multi-factor weighting
+
+### 🔌 WebSocket Endpoints
+| Endpoint | Description |
+|----------|-------------|
+| `ws://host:8000/ws/packets` | Real-time packet stream |
+| `ws://host:8000/ws/alerts`  | Live classified alert feed |
+
+### 📦 Architecture
+```
+Packets → Sniffer → DPI Parser → Session Tracker → IDS/ML → Classifier → MQ → WebSocket
+                                                         ↓
+                                                   PostgreSQL + Elasticsearch
+```
+""",
+    version="2.0.0",
+    license_info={"name": "MIT", "url": "https://opensource.org/licenses/MIT"},
+    openapi_tags=[
+        {"name": "Capture", "description": "Live packet capture controls (start/stop/pause/resume)"},
+        {"name": "Packets", "description": "Query captured packet records and session flows"},
+        {"name": "Alerts", "description": "View IDS, ML, and rule-based threat alerts"},
+        {"name": "PCAP", "description": "Upload and analyze .pcap/.pcapng files with threat intelligence"},
+        {"name": "Firewall", "description": "Manage IP block/unblock rules and domain filtering"},
+        {"name": "Network", "description": "Network topology graph with geo-located nodes"},
+        {"name": "Risk", "description": "Zero-Trust risk scores for tracked IPs"},
+        {"name": "Incidents", "description": "Correlated security incidents and attack timelines"},
+        {"name": "ML", "description": "Machine learning model status and recent predictions"},
+        {"name": "Auth", "description": "User authentication (JWT-based)"},
+        {"name": "System", "description": "Health checks, diagnostics, and system info"},
+    ],
 )
 
 app.add_middleware(
@@ -72,8 +114,12 @@ session_tracker = SessionTracker()
 MAX_RECENT = 2000
 recent_packets: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT)
 
+# Ring buffer for recent ML alerts (for dashboard feed)
+recent_ml_alerts: deque[dict[str, Any]] = deque(maxlen=50)
+
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
+ws_alert_clients: set[WebSocket] = set()
 main_loop = None
 
 # Packet counter
@@ -102,6 +148,9 @@ def _on_packet(raw_pkt) -> None:
     # Parse packet into rich dict
     record = parse_packet(raw_pkt, packet_id=pkt_id)
 
+    # Send to Elasticsearch
+    index_packet(record)
+
     # Track session
     flow = session_tracker.update(record)
     
@@ -117,9 +166,13 @@ def _on_packet(raw_pkt) -> None:
         packet_alerts.extend(yara_engine.evaluate_payload(raw_bytes, record.get("src_ip", ""), record.get("dst_ip", "")))
 
     for alert_data in packet_alerts:
-        save_alert(**alert_data)
+        alert_data = classifier.classify(alert_data)
+        saved_id = save_alert(**alert_data)
+        alert_data["id"] = saved_id
+        index_alert(alert_data)
+        mq.publish_alert(alert_data)
         # Auto-block critical/high threats
-        if alert_data.get("cvss_score", 0) >= 7.0:
+        if alert_data.get("cvss_score", 0) >= 7.0 or alert_data.get("severity") in ["high", "critical"]:
             firewall.block_ip(alert_data["src_ip"], reason=alert_data["title"])
         # Update risk scores based on alert type
         src = alert_data.get("src_ip", "")
@@ -138,8 +191,12 @@ def _on_packet(raw_pkt) -> None:
     if flow:
         flow_alerts = ids_engine.evaluate_flow(flow)
         for alert_data in flow_alerts:
-            save_alert(**alert_data)
-            if alert_data.get("cvss_score", 0) >= 7.0:
+            alert_data = classifier.classify(alert_data)
+            saved_id = save_alert(**alert_data)
+            alert_data["id"] = saved_id
+            index_alert(alert_data)
+            mq.publish_alert(alert_data)
+            if alert_data.get("cvss_score", 0) >= 7.0 or alert_data.get("severity") in ["high", "critical"]:
                 firewall.block_ip(alert_data["src_ip"], reason=alert_data["title"])
             # Update risk scores
             src = alert_data.get("src_ip", "")
@@ -151,21 +208,66 @@ def _on_packet(raw_pkt) -> None:
                     risk_scorer.add_factor(src, "beaconing")
                 elif "IDS-002" in rule_id:
                     risk_scorer.add_factor(src, "cleartext_protocol")
+                    
+        # 3. Machine Learning Inference
+        if ml_predictor.is_loaded and getattr(flow, 'total_packets', 0) > 3:
+            ml_result = ml_predictor.predict_flow(flow)
+            
+            # Format prediction for the dashboard feed
+            recent_ml_alerts.append({
+                "timestamp": time.time(),
+                "src_ip": flow.src_ip,
+                "dst_ip": flow.dst_ip,
+                "attack_type": ml_result["attack_type"],
+                "confidence": ml_result["confidence"],
+                "is_attack": ml_result["is_attack"]
+            })
+            
+            # Generate a real alert if confidence is very high
+            if ml_result["is_attack"] and ml_result["confidence"] > 0.85:
+                if not getattr(flow, '_ml_alerted', False):
+                    flow._ml_alerted = True
+                    ml_alert = {
+                        "title": f"ML Detection: {ml_result['attack_type']}",
+                        "description": f"AI model detected anomalous flow pattern indicative of {ml_result['attack_type']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
+                                       f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
+                        "severity": "critical" if ml_result['confidence'] > 0.95 else "high",
+                        "source": "ml_ensemble",
+                        "src_ip": flow.src_ip,
+                        "dst_ip": flow.dst_ip,
+                        "cvss_score": 8.0,
+                        "raw_data": ml_result
+                    }
+                    ml_alert = classifier.classify(ml_alert)
+                    saved_id = save_alert(**ml_alert)
+                    ml_alert["id"] = saved_id
+                    index_alert(ml_alert)
+                    mq.publish_alert(ml_alert)
+                    
+                    risk_scorer.add_factor(flow.src_ip, "ml_high_confidence")
+                    if ml_result['confidence'] > 0.95:
+                        firewall.block_ip(flow.src_ip, reason=f"ML Auto-Block ({ml_result['attack_type']})")
     
     # If the flow just became suspicious, we should generate an alert
     if flow and getattr(flow, 'is_suspicious', False) and not getattr(flow, '_alerted', False):
         flow._alerted = True
         for msg in flow.alerts:
-            alert = save_alert(
-                title="Threat Feed Hit",
-                description=msg,
-                severity="high",
-                source="threat_intel",
-                src_ip=flow.src_ip,
-                dst_ip=flow.dst_ip,
-                cvss_score=8.5,
-                raw_data=flow.to_dict()
-            )
+            raw_alert = {
+                "title": "Threat Feed Hit",
+                "description": msg,
+                "severity": "high",
+                "source": "threat_intel",
+                "src_ip": flow.src_ip,
+                "dst_ip": flow.dst_ip,
+                "cvss_score": 8.5,
+                "raw_data": flow.to_dict()
+            }
+            raw_alert = classifier.classify(raw_alert)
+            saved_id = save_alert(**raw_alert)
+            raw_alert["id"] = saved_id
+            index_alert(raw_alert)
+            mq.publish_alert(raw_alert)
+            
             firewall.block_ip(flow.src_ip, reason="Threat Feed Hit")
             risk_scorer.add_factor(flow.src_ip, "threat_feed_hit")
 
@@ -179,8 +281,8 @@ def _on_packet(raw_pkt) -> None:
     # Store in ring buffer
     recent_packets.append(record)
 
-    # Broadcast to WebSocket clients (fire-and-forget)
-    _broadcast(record)
+    # Publish to message queue (Redis or in-memory fallback)
+    mq.publish_packet(record)
 
 
 def _broadcast(record: dict[str, Any]) -> None:
@@ -228,6 +330,20 @@ async def websocket_packets(ws: WebSocket):
         pass
     finally:
         ws_clients.discard(ws)
+
+
+@app.websocket("/ws/alerts")
+async def websocket_alerts(ws: WebSocket):
+    """Real-time classified alert stream via WebSocket."""
+    await ws.accept()
+    ws_alert_clients.add(ws)
+    try:
+        while True:
+            await ws.receive_text()
+    except WebSocketDisconnect:
+        pass
+    finally:
+        ws_alert_clients.discard(ws)
 
 
 # ---------------------------------------------------------------------------
@@ -602,11 +718,25 @@ def lookup_threat(ip: str):
 
 
 # ---------------------------------------------------------------------------
-# Startup
+# Background tasks and startup
 # ---------------------------------------------------------------------------
 
+@app.get("/api/ml/status")
+def get_ml_status(_user = Depends(get_current_user)):
+    """Get status of the ML prediction engine."""
+    return {
+        "loaded": ml_predictor.is_loaded,
+        "classes": ml_predictor.classes,
+        "accuracy": getattr(ml_predictor, 'accuracy', 0.0)
+    }
+
+@app.get("/api/ml/recent")
+def get_ml_recent(_user = Depends(get_current_user)):
+    """Get recent ML predictions for dashboard feed."""
+    return list(recent_ml_alerts)[::-1][:20]
+
 async def correlation_loop():
-    """Background loop to periodically correlate alerts into incidents."""
+    """Periodically group alerts into incidents."""
     while True:
         try:
             # Run the synchronous db correlation in an executor
@@ -630,10 +760,36 @@ async def startup():
     # Start background task for incident correlation
     asyncio.create_task(correlation_loop())
     
+    # Start MQ subscriber to fan out packets to WebSocket clients
+    def _on_mq_packet(msg: str):
+        """Called by MQ subscriber thread; schedules sends on the event loop."""
+        if not ws_clients or not main_loop or main_loop.is_closed():
+            return
+        for ws in ws_clients.copy():
+            try:
+                asyncio.run_coroutine_threadsafe(_safe_send(ws, msg), main_loop)
+            except Exception:
+                ws_clients.discard(ws)
+
+    def _on_mq_alert(msg: str):
+        """Called by MQ subscriber thread; sends alerts to /ws/alerts clients."""
+        if not ws_alert_clients or not main_loop or main_loop.is_closed():
+            return
+        for ws in ws_alert_clients.copy():
+            try:
+                asyncio.run_coroutine_threadsafe(_safe_send(ws, msg), main_loop)
+            except Exception:
+                ws_alert_clients.discard(ws)
+
+    mq.subscribe(mq.CHANNEL_PACKETS, _on_mq_packet)
+    mq.subscribe(mq.CHANNEL_ALERTS, _on_mq_alert)
+    
     print("\n" + "=" * 60)
-    print("  PacketAnalyzer-Pro  v1.0.0")
+    print("  PacketAnalyzer-Pro  v2.0.0")
     print("  SOC/SIEM Backend Ready")
+    print("  MQ: " + ("Redis" if mq.is_redis_available() else "In-Memory"))
     print("=" * 60)
     print(f"  Swagger UI:  http://localhost:8000/docs")
     print(f"  WebSocket:   ws://localhost:8000/ws/packets")
+    print(f"  Alerts WS:   ws://localhost:8000/ws/alerts")
     print("=" * 60 + "\n")

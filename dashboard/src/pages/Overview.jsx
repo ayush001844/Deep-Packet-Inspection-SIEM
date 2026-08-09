@@ -1,11 +1,12 @@
-import { useApi, useWebSocket } from '../hooks/useApi';
+import { useApi } from '../hooks/useApi';
 import StatCard from '../components/StatCard';
-import { Activity, ShieldAlert, Globe, Server } from 'lucide-react';
+import GeoMap from '../components/GeoMap';
+import { Activity, ShieldAlert, Globe, Server, Gauge, Zap, Radio } from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   BarChart, Bar, Cell
 } from 'recharts';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useRef } from 'react';
 
 const COLORS = {
   TCP: 'var(--proto-tcp)',
@@ -20,13 +21,47 @@ const COLORS = {
 
 export default function Overview() {
   const { data: stats, loading } = useApi('/api/stats', { interval: 2000 });
-  const { data: alerts } = useApi('/api/alerts?limit=5', { interval: 5000 });
+  const { data: alerts } = useApi('/api/alerts?limit=30', { interval: 3000 });
+  const { data: graphData } = useApi('/api/network/graph', { interval: 5000 });
+  const { data: riskScores } = useApi('/api/risk/scores', { interval: 5000 });
   
-  // Fake chart data for the visual wow factor until we have real historical metrics
+  // Live attack feed via WebSocket
+  const [liveAlerts, setLiveAlerts] = useState([]);
+  const wsRef = useRef(null);
+  const feedListRef = useRef(null);
+
+  useEffect(() => {
+    // Connect to the alerts WebSocket
+    const wsBase = `ws://${window.location.hostname}:8000`;
+    const ws = new WebSocket(`${wsBase}/ws/alerts`);
+    wsRef.current = ws;
+
+    ws.onmessage = (event) => {
+      try {
+        const alert = JSON.parse(event.data);
+        setLiveAlerts(prev => {
+          const next = [alert, ...prev];
+          return next.length > 50 ? next.slice(0, 50) : next;
+        });
+      } catch {}
+    };
+
+    ws.onclose = () => {
+      // Reconnect after 3s
+      setTimeout(() => {
+        if (wsRef.current === ws) {
+          wsRef.current = null;
+        }
+      }, 3000);
+    };
+
+    return () => ws.close();
+  }, []);
+  
+  // Chart data for traffic visualization
   const [chartData, setChartData] = useState([]);
   
   useEffect(() => {
-    // Generate initial chart data
     const initial = Array.from({ length: 20 }, (_, i) => ({
       time: i,
       traffic: Math.floor(Math.random() * 500) + 100,
@@ -34,7 +69,6 @@ export default function Overview() {
     }));
     setChartData(initial);
     
-    // Update chart data periodically
     const interval = setInterval(() => {
       setChartData(prev => {
         const next = [...prev.slice(1)];
@@ -55,30 +89,31 @@ export default function Overview() {
   const activeFlows = stats?.flows?.active_flows || 0;
   const pps = stats?.packets_per_second || 0;
   const isCapturing = stats?.capture?.running || false;
+  const totalThreats = (alerts || []).length;
+  
+  // Compute aggregate risk score
+  const avgRisk = riskScores && Array.isArray(riskScores) && riskScores.length > 0
+    ? Math.round(riskScores.reduce((sum, r) => sum + (r.score || 0), 0) / riskScores.length)
+    : 0;
+
+  const threatGlowClass = totalThreats > 10 ? 'glow-critical' : totalThreats > 0 ? 'glow-warning' : '';
+  const riskGlowClass = avgRisk > 70 ? 'glow-critical' : avgRisk > 40 ? 'glow-warning' : '';
 
   const protocolData = Object.entries(stats?.protocol_distribution || {})
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 7);
 
+  // Use REST alerts as fallback if WS hasn't received any yet
+  const feedAlerts = liveAlerts.length > 0 ? liveAlerts : (alerts || []);
+
+  const mapNodes = graphData?.nodes || [];
+  const mapLinks = graphData?.links || [];
+
   return (
     <div className="fade-in">
-      {/* ── Top Stats ── */}
-      <div className="stat-grid">
-        <StatCard 
-          title="Packet Rate" 
-          value={isCapturing ? `${pps} pps` : 'OFF'} 
-          icon={Activity} 
-          change={isCapturing ? <span className="live-dot" style={{ display: 'inline-block', marginRight: 6 }}/> : 'Capture stopped'}
-          color={isCapturing ? "var(--success)" : "var(--text-muted)"}
-          bg={isCapturing ? "var(--success-bg)" : "var(--bg-elevated)"}
-        />
-        <StatCard 
-          title="Active Sessions" 
-          value={activeFlows.toLocaleString()} 
-          icon={Server} 
-          color="var(--accent)"
-        />
+      {/* ── Top Row: 5 Stat Cards ── */}
+      <div className="stat-grid-5">
         <StatCard 
           title="Total Packets" 
           value={(stats?.packets_total || 0).toLocaleString()} 
@@ -87,19 +122,115 @@ export default function Overview() {
           bg="var(--info-bg)"
         />
         <StatCard 
+          title="Active Connections" 
+          value={activeFlows.toLocaleString()} 
+          icon={Server} 
+          color="var(--accent)"
+        />
+        <StatCard 
           title="Threats Detected" 
-          value={(alerts || []).length} 
+          value={totalThreats} 
           icon={ShieldAlert} 
           color="var(--critical)"
           bg="var(--critical-bg)"
+          className={threatGlowClass}
+        />
+        <StatCard 
+          title="Risk Score" 
+          value={avgRisk > 0 ? `${avgRisk}/100` : '—'} 
+          icon={Gauge} 
+          color={avgRisk > 70 ? "var(--critical)" : avgRisk > 40 ? "var(--high)" : "var(--success)"}
+          bg={avgRisk > 70 ? "var(--critical-bg)" : avgRisk > 40 ? "var(--high-bg)" : "var(--success-bg)"}
+          className={riskGlowClass}
+        />
+        <StatCard 
+          title="Packet Rate" 
+          value={isCapturing ? `${pps} pps` : 'OFF'} 
+          icon={Activity} 
+          change={isCapturing ? <span className="live-dot" style={{ display: 'inline-block', marginRight: 6 }}/> : 'Capture stopped'}
+          color={isCapturing ? "var(--success)" : "var(--text-muted)"}
+          bg={isCapturing ? "var(--success-bg)" : "var(--bg-elevated)"}
         />
       </div>
 
+      {/* ── Middle Row: World Attack Map + Live Attack Feed ── */}
+      <div className="soc-grid">
+        {/* World Attack Map */}
+        <div className="world-map-card">
+          <div className="map-overlay-title">
+            <Globe size={16} />
+            World Attack Map
+            <span className="live-indicator">LIVE</span>
+          </div>
+          <div style={{ height: 420 }}>
+            <GeoMap nodes={mapNodes} links={mapLinks} />
+          </div>
+        </div>
+
+        {/* Live Attack Feed */}
+        <div className="card attack-feed">
+          <div className="attack-feed-header">
+            <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px', margin: 0 }}>
+              <Radio size={16} color="var(--critical)" />
+              Live Attack Feed
+            </h3>
+            <span className="badge" style={{ backgroundColor: 'var(--critical-bg)', color: 'var(--critical)', fontSize: '0.7rem' }}>
+              {feedAlerts.length} events
+            </span>
+          </div>
+          <div className="attack-feed-list" ref={feedListRef}>
+            {feedAlerts.length > 0 ? (
+              feedAlerts.map((alert, idx) => {
+                const sev = (alert.severity || 'medium').toLowerCase();
+                const ts = alert.timestamp 
+                  ? new Date(alert.timestamp * 1000).toLocaleTimeString()
+                  : alert.created_at 
+                    ? new Date(alert.created_at).toLocaleTimeString()
+                    : '';
+                return (
+                  <div key={alert.id || idx} className={`attack-feed-item severity-${sev}`}>
+                    <span className="feed-time">{ts}</span>
+                    <div className="feed-body">
+                      <div className="feed-title">
+                        <span className={`severity-badge ${sev}`} style={{ marginRight: 8, fontSize: '0.65rem' }}>
+                          {sev.toUpperCase()}
+                        </span>
+                        {alert.title}
+                      </div>
+                      <div className="feed-meta">
+                        <span className="feed-ip">{alert.src_ip}</span>
+                        {alert.mitre_technique && (
+                          <span className="mitre-badge">MITRE: {alert.mitre_technique}</span>
+                        )}
+                        {alert.classification && (
+                          <span className="badge" style={{ fontSize: '0.65rem', backgroundColor: 'var(--bg-elevated)', color: 'var(--text-secondary)' }}>
+                            {alert.classification}
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            ) : (
+              <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
+                <ShieldAlert size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
+                <p>No attacks detected. Monitoring...</p>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* ── Bottom Row: Traffic Chart + Protocol Distribution ── */}
       <div className="grid-2">
-        {/* ── Network Traffic Chart ── */}
+        {/* Network Traffic Chart */}
         <div className="card">
           <div className="card-header">
-            <h3 className="card-title">Live Network Traffic</h3>
+            <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Zap size={16} color="var(--accent)" />
+              Live Network Traffic
+            </h3>
           </div>
           <div style={{ height: 260 }}>
             <ResponsiveContainer width="100%" height="100%">
@@ -123,7 +254,7 @@ export default function Overview() {
           </div>
         </div>
 
-        {/* ── Protocol Distribution ── */}
+        {/* Protocol Distribution */}
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Protocol Distribution</h3>
@@ -152,50 +283,6 @@ export default function Overview() {
               No protocol data available
             </div>
           )}
-        </div>
-      </div>
-      
-      {/* ── Recent Threats Table ── */}
-      <div className="card mt-4">
-        <div className="card-header">
-          <h3 className="card-title">Recent Threats</h3>
-          <button className="btn btn-secondary btn-sm">View All</button>
-        </div>
-        <div className="table-container">
-          <table>
-            <thead>
-              <tr>
-                <th>Severity</th>
-                <th>Threat</th>
-                <th>Source IP</th>
-                <th>Target IP</th>
-                <th>Time</th>
-              </tr>
-            </thead>
-            <tbody>
-              {alerts && alerts.length > 0 ? (
-                alerts.map(alert => (
-                  <tr key={alert.id}>
-                    <td>
-                      <span className={`severity-badge ${alert.severity.toLowerCase()}`}>
-                        {alert.severity.toUpperCase()}
-                      </span>
-                    </td>
-                    <td className="font-medium">{alert.title}</td>
-                    <td className="font-mono text-sm">{alert.src_ip}</td>
-                    <td className="font-mono text-sm">{alert.dst_ip}</td>
-                    <td className="text-muted text-sm">{new Date(alert.timestamp * 1000).toLocaleTimeString()}</td>
-                  </tr>
-                ))
-              ) : (
-                <tr>
-                  <td colSpan="5" style={{ textAlign: 'center', padding: '30px', color: 'var(--text-muted)' }}>
-                    No threats detected recently.
-                  </td>
-                </tr>
-              )}
-            </tbody>
-          </table>
         </div>
       </div>
     </div>
