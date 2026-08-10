@@ -13,6 +13,8 @@ import Login from './pages/Login';
 import PacketLog from './pages/PacketLog';
 import MitreNavigator from './pages/MitreNavigator';
 import MLDetections from './pages/MLDetections';
+import AnomalyDetection from './pages/AnomalyDetection';
+import UEBA from './pages/UEBA';
 import { useAuth } from './contexts/AuthContext';
 
 // Placeholder for other pages
@@ -47,6 +49,8 @@ export default function App() {
           <Route path="rules" element={<Rules />} />
           <Route path="mitre" element={<MitreNavigator />} />
           <Route path="ml" element={<MLDetections />} />
+          <Route path="anomaly" element={<AnomalyDetection />} />
+          <Route path="ueba" element={<UEBA />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>

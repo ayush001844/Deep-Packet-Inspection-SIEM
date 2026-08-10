@@ -171,9 +171,25 @@ export default function PcapAnalysis() {
                 </p>
               </div>
             </div>
-            <button className="btn btn-secondary" onClick={() => { setResults(null); setFile(null); }}>
-              Analyze Another File
-            </button>
+            <div style={{ display: 'flex', gap: '10px' }}>
+              <button className="btn btn-primary" onClick={() => {
+                const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(results, null, 2));
+                const downloadAnchorNode = document.createElement('a');
+                downloadAnchorNode.setAttribute("href",     dataStr);
+                downloadAnchorNode.setAttribute("download", `PCAP_Report_${results.file}.json`);
+                document.body.appendChild(downloadAnchorNode);
+                downloadAnchorNode.click();
+                downloadAnchorNode.remove();
+              }}>
+                Download Full Report (JSON)
+              </button>
+              <button className="btn btn-secondary" onClick={() => { window.print(); }}>
+                Print Report
+              </button>
+              <button className="btn btn-secondary" onClick={() => { setResults(null); setFile(null); }}>
+                Analyze Another
+              </button>
+            </div>
           </div>
 
           {/* ── Threat Intelligence Summary ── */}

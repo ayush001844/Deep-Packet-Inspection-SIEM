@@ -45,6 +45,10 @@ from backend.db.database import (
 from backend.detection.classifier import classifier
 from backend.db.elastic import index_packet, index_alert
 from backend.ml_engine.predict import ml_predictor
+from backend.ml_engine.autoencoder import anomaly_detector
+from backend.ueba.behavior import ueba_engine
+from backend.threat.reputation import reputation_engine
+from backend.detection.asset_registry import asset_registry
 from backend.ai.assistant import security_assistant
 from backend.rate_limiter import RateLimiterMiddleware, SecurityHeadersMiddleware
 import backend.mq as mq
@@ -127,6 +131,9 @@ recent_packets: deque[dict[str, Any]] = deque(maxlen=MAX_RECENT)
 
 # Ring buffer for recent ML alerts (for dashboard feed)
 recent_ml_alerts: deque[dict[str, Any]] = deque(maxlen=50)
+
+# Ring buffer for anomaly detector alerts
+recent_anomalies: deque[dict[str, Any]] = deque(maxlen=200)
 
 # Connected WebSocket clients
 ws_clients: set[WebSocket] = set()
@@ -539,78 +546,92 @@ def get_mitre_coverage(_user = Depends(get_current_user)):
 
 @app.get("/api/network/graph")
 def api_network_graph():
-    """Generates a node/link graph of current active sessions for visualization."""
-    nodes = {}
+    """Generates an intelligence-enriched node/link graph of active sessions."""
+    nodes: dict[str, dict] = {}
     links = []
-    
-    # Build graph from active sessions
+
+    # Build score lookup
+    all_scores = risk_scorer.get_all_scores()
+    score_map   = {r["ip"]: r["score"] for r in all_scores}
+    attack_map  = {r["ip"]: r.get("ml_attack", "") for r in all_scores}
+    attack_counts: dict[str, int] = {}
+
     for flow in session_tracker.get_flows():
         src = flow.get("src_ip")
         dst = flow.get("dst_ip")
         if not src or not dst:
             continue
-            
-        if src not in nodes:
-            nodes[src] = {
-                "id": src, 
-                "group": 1 if flow.get("is_suspicious") else 0, 
-                "val": 1,
-                "geo": flow.get("src_geo", {})
-            }
-        else:
-            nodes[src]["val"] += 1
-            if flow.get("is_suspicious"): nodes[src]["group"] = 1
-            
-        if dst not in nodes:
-            nodes[dst] = {
-                "id": dst, 
-                "group": 1 if flow.get("is_suspicious") else 0, 
-                "val": 1,
-                "geo": flow.get("dst_geo", {})
-            }
-        else:
-            nodes[dst]["val"] += 1
-            if flow.get("is_suspicious"): nodes[dst]["group"] = 1
-            
-        # Create link
+
+        for ip, geo, role in [(src, flow.get("src_geo", {}), "src"), (dst, flow.get("dst_geo", {}), "dst")]:
+            attack_counts[ip] = attack_counts.get(ip, 0) + (1 if flow.get("is_suspicious") else 0)
+            risk = score_map.get(ip, 0)
+            attack = attack_map.get(ip, "")
+
+            # Infer node type
+            if risk > 60 or flow.get("is_suspicious"):
+                node_type = "attacker"
+            elif flow.get("dst_port") in (3306, 5432, 1433, 27017):
+                node_type = "database"
+            elif flow.get("dst_port") in (80, 443, 8080):
+                node_type = "web_server"
+            elif ip.startswith(("192.168.", "10.", "172.")):
+                node_type = "internal"
+            else:
+                node_type = "external"
+
+            if ip not in nodes:
+                nodes[ip] = {
+                    "id":           ip,
+                    "group":        1 if flow.get("is_suspicious") else 0,
+                    "val":          1,
+                    "geo":          geo,
+                    "risk_score":   risk,
+                    "attack_count": attack_counts.get(ip, 0),
+                    "node_type":    node_type,
+                    "ml_attack":    attack,
+                    "label":        ip,
+                }
+            else:
+                nodes[ip]["val"]          += 1
+                nodes[ip]["risk_score"]    = max(nodes[ip]["risk_score"], risk)
+                nodes[ip]["attack_count"]  = attack_counts.get(ip, 0)
+                nodes[ip]["ml_attack"]     = nodes[ip]["ml_attack"] or attack
+                if flow.get("is_suspicious"):
+                    nodes[ip]["group"]     = 1
+                    nodes[ip]["node_type"] = "attacker"
+
         links.append({
-            "source": src,
-            "target": dst,
-            "protocol": flow.get("protocol"),
-            "is_suspicious": flow.get("is_suspicious", False)
+            "source":       src,
+            "target":       dst,
+            "protocol":     flow.get("protocol"),
+            "is_suspicious": flow.get("is_suspicious", False),
         })
 
-    # If no live sessions, return realistic demo data so map is always visible
     if not nodes:
+        # Rich demo data (kept for when no capture is running)
         demo_nodes = [
-            {"id": "192.168.1.10", "group": 0, "val": 5, "label": "Local Host", "geo": {"lat": 28.6139, "lon": 77.2090, "country": "India"}},
-            {"id": "192.168.1.1",  "group": 0, "val": 3, "label": "Gateway",    "geo": {"lat": 28.6139, "lon": 77.2090, "country": "India"}},
-            {"id": "8.8.8.8",      "group": 0, "val": 4, "label": "Google DNS",  "geo": {"lat": 37.4220, "lon": -122.0841, "country": "United States"}},
-            {"id": "142.250.195.46","group": 0, "val": 2, "label": "Google",     "geo": {"lat": 37.4220, "lon": -122.0841, "country": "United States"}},
-            {"id": "172.217.24.142","group": 1, "val": 2, "label": "YouTube",    "geo": {"lat": 37.4220, "lon": -122.0841, "country": "United States"}},
-            {"id": "1.1.1.1",      "group": 0, "val": 2, "label": "Cloudflare", "geo": {"lat": 33.4484, "lon": -112.0740, "country": "United States"}},
-            {"id": "104.21.45.87", "group": 0, "val": 1, "label": "CDN Node",   "geo": {"lat": 51.5074, "lon": -0.1278,   "country": "United Kingdom"}},
-            {"id": "185.199.108.153","group": 0, "val": 1, "label": "GitHub",   "geo": {"lat": 37.7749, "lon": -122.4194, "country": "United States"}},
-            {"id": "91.108.4.165", "group": 1, "val": 1, "label": "Telegram",   "geo": {"lat": 52.5200, "lon": 13.4050,  "country": "Germany"}},
+            {"id": "192.168.1.10",    "group": 0, "val": 5,  "label": "Workstation",  "node_type": "internal",    "risk_score": 0,  "attack_count": 0, "ml_attack": "",              "geo": {"lat": 28.61, "lon": 77.20, "country": "India"}},
+            {"id": "192.168.1.1",     "group": 0, "val": 3,  "label": "Gateway",      "node_type": "internal",    "risk_score": 5,  "attack_count": 0, "ml_attack": "",              "geo": {"lat": 28.61, "lon": 77.20, "country": "India"}},
+            {"id": "192.168.1.50",    "group": 0, "val": 2,  "label": "DB Server",    "node_type": "database",    "risk_score": 10, "attack_count": 0, "ml_attack": "",              "geo": {"lat": 28.61, "lon": 77.20, "country": "India"}},
+            {"id": "8.8.8.8",         "group": 0, "val": 4,  "label": "Google DNS",   "node_type": "external",    "risk_score": 0,  "attack_count": 0, "ml_attack": "",              "geo": {"lat": 37.42, "lon": -122.08, "country": "USA"}},
+            {"id": "185.199.108.153", "group": 0, "val": 2,  "label": "GitHub",       "node_type": "web_server",  "risk_score": 0,  "attack_count": 0, "ml_attack": "",              "geo": {"lat": 37.77, "lon": -122.41, "country": "USA"}},
+            {"id": "45.83.64.1",      "group": 1, "val": 4,  "label": "Attacker",     "node_type": "attacker",    "risk_score": 88, "attack_count": 7, "ml_attack": "SSH Brute Force","geo": {"lat": 55.75, "lon": 37.61, "country": "Russia"}},
+            {"id": "91.108.4.165",    "group": 1, "val": 3,  "label": "C2 Server",    "node_type": "attacker",    "risk_score": 76, "attack_count": 3, "ml_attack": "C2 Beaconing", "geo": {"lat": 52.52, "lon": 13.40, "country": "Germany"}},
+            {"id": "203.0.113.42",    "group": 1, "val": 2,  "label": "Port Scanner", "node_type": "attacker",    "risk_score": 65, "attack_count": 4, "ml_attack": "Port Scan",    "geo": {"lat": 39.90, "lon": 116.40, "country": "China"}},
         ]
         demo_links = [
-            {"source": "192.168.1.10", "target": "192.168.1.1",  "protocol": "TCP",  "is_suspicious": False},
-            {"source": "192.168.1.1",  "target": "8.8.8.8",      "protocol": "UDP",  "is_suspicious": False},
-            {"source": "192.168.1.10", "target": "8.8.8.8",      "protocol": "UDP",  "is_suspicious": False},
-            {"source": "192.168.1.10", "target": "142.250.195.46","protocol": "TCP", "is_suspicious": False},
-            {"source": "192.168.1.10", "target": "172.217.24.142","protocol": "TLS", "is_suspicious": True},
-            {"source": "192.168.1.10", "target": "1.1.1.1",      "protocol": "ICMP", "is_suspicious": False},
-            {"source": "192.168.1.10", "target": "104.21.45.87", "protocol": "TCP",  "is_suspicious": False},
-            {"source": "192.168.1.10", "target": "185.199.108.153","protocol": "TLS","is_suspicious": False},
-            {"source": "192.168.1.10", "target": "91.108.4.165", "protocol": "TCP",  "is_suspicious": True},
+            {"source": "192.168.1.10",  "target": "192.168.1.1",   "protocol": "TCP",  "is_suspicious": False},
+            {"source": "192.168.1.1",   "target": "8.8.8.8",       "protocol": "UDP",  "is_suspicious": False},
+            {"source": "192.168.1.10",  "target": "185.199.108.153","protocol": "TLS",  "is_suspicious": False},
+            {"source": "192.168.1.10",  "target": "192.168.1.50",  "protocol": "TCP",  "is_suspicious": False},
+            {"source": "45.83.64.1",    "target": "192.168.1.10",  "protocol": "TCP",  "is_suspicious": True},
+            {"source": "91.108.4.165",  "target": "192.168.1.10",  "protocol": "TLS",  "is_suspicious": True},
+            {"source": "203.0.113.42",  "target": "192.168.1.50",  "protocol": "TCP",  "is_suspicious": True},
+            {"source": "45.83.64.1",    "target": "192.168.1.50",  "protocol": "TCP",  "is_suspicious": True},
         ]
         return {"nodes": demo_nodes, "links": demo_links, "is_demo": True}
 
-    return {
-        "nodes": list(nodes.values()),
-        "links": links,
-        "is_demo": False
-    }
+    return {"nodes": list(nodes.values()), "links": links, "is_demo": False}
 
 
 # ---------------------------------------------------------------------------
@@ -737,8 +758,177 @@ def _ml_color(attack: str) -> str:
     }
     return colors.get(attack, "#6b7280")
 
+
+# ---------------------------------------------------------------------------
+# Upgrade 2: Anomaly Detection API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/anomaly/recent")
+def get_recent_anomalies(_user = Depends(get_current_user)):
+    """Recent autoencoder-detected anomalies."""
+    return list(recent_anomalies)[:50]
+
+@app.get("/api/anomaly/stats")
+def get_anomaly_stats(_user = Depends(get_current_user)):
+    """Anomaly detection statistics."""
+    anoms = list(recent_anomalies)
+    scores = [a.get("anomaly_score", 0) for a in anoms]
+    return {
+        "total_anomalies": len(anoms),
+        "model_loaded": anomaly_detector.is_loaded(),
+        "threshold": anomaly_detector._threshold,
+        "avg_score": round(sum(scores) / max(len(scores), 1), 3),
+        "max_score": round(max(scores, default=0), 3),
+        "recent": anoms[:10],
+    }
+
+
+# ---------------------------------------------------------------------------
+# Upgrade 4: UEBA API
+# ---------------------------------------------------------------------------
+
+class UEBAEventModel(BaseModel):
+    username: str
+    event_type: str
+    timestamp: float = 0.0
+    src_ip: str = ""
+    country: str = ""
+    hour: int = 12
+    file_count: int = 0
+    success: bool = True
+
+@app.post("/api/ueba/event")
+def ingest_ueba_event(event: UEBAEventModel, _user = Depends(get_current_user)):
+    """Ingest a user behavior event."""
+    payload = event.model_dump()
+    if not payload["timestamp"]:
+        payload["timestamp"] = time.time()
+    alert = ueba_engine.process_event(payload)
+    return {"alert": alert, "processed": True}
+
+@app.get("/api/ueba/alerts")
+def get_ueba_alerts(_user = Depends(get_current_user)):
+    """Recent UEBA alerts."""
+    return ueba_engine.get_recent_alerts(50)
+
+@app.get("/api/ueba/baseline/{username}")
+def get_ueba_baseline(username: str, _user = Depends(get_current_user)):
+    """Get a user's behavior baseline."""
+    baseline = ueba_engine.get_baseline(username)
+    if not baseline:
+        raise HTTPException(status_code=404, detail=f"No baseline for user '{username}'")
+    return baseline
+
+@app.get("/api/ueba/users")
+def get_ueba_users(_user = Depends(get_current_user)):
+    """List all tracked users with their baselines."""
+    return ueba_engine.all_baselines()
+
+@app.get("/api/ueba/stats")
+def get_ueba_stats(_user = Depends(get_current_user)):
+    return ueba_engine.get_stats()
+
+
+# ---------------------------------------------------------------------------
+# Upgrade 5: Enhanced Threat Intelligence API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/threat/reputation/{ip}")
+def get_ip_reputation(ip: str, _user = Depends(get_current_user)):
+    """Multi-source IP reputation check (VirusTotal, AbuseIPDB, OTX, open feeds)."""
+    result = reputation_engine.check(ip)
+    # Feed the score into the dynamic risk scorer
+    if result.get("malicious"):
+        risk_scorer.set_threat_reputation(ip, result["threat_score"])
+    return result
+
+@app.get("/api/threat/reputation-cache")
+def get_reputation_cache_stats(_user = Depends(get_current_user)):
+    """Reputation engine cache and API key status."""
+    return reputation_engine.get_cache_stats()
+
+
+# ---------------------------------------------------------------------------
+# Upgrade 3 (extension): Asset Registry API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/assets")
+def get_assets(_user = Depends(get_current_user)):
+    """List all registered assets."""
+    return asset_registry.all_assets()
+
+class AssetModel(BaseModel):
+    ip: str
+    asset_type: str
+    name: str = ""
+    importance: float = 0.5
+
+@app.post("/api/assets")
+def register_asset(asset: AssetModel, _user = Depends(get_current_user)):
+    """Register an IP as a specific asset type."""
+    asset_registry.register(asset.ip, asset.asset_type, asset.name, asset.importance)
+    return {"registered": True, "ip": asset.ip}
+
+
+# ---------------------------------------------------------------------------
+# Upgrade 8: MITRE ATT&CK Chain API
+# ---------------------------------------------------------------------------
+
+@app.get("/api/mitre/attack-chain")
+def get_attack_chain(_user = Depends(get_current_user)):
+    """
+    Build a chronological MITRE ATT&CK chain from recent alerts.
+    Returns ordered list of technique activations with timestamps.
+    """
+    from backend.detection.mitre_navigator import mitre_navigator
+
+    try:
+        alerts = get_alerts(limit=200)
+    except Exception:
+        alerts = []
+
+    seen_techniques: dict[str, dict] = {}
+    chain: list[dict] = []
+
+    for alert in alerts:
+        tech = alert.get("mitre_technique") or alert.get("mitre_id", "")
+        if not tech:
+            continue
+        ts = alert.get("timestamp") or (alert.get("created_at") and str(alert["created_at"]))
+        # Convert created_at string to epoch if needed
+        if isinstance(ts, str):
+            try:
+                from datetime import datetime
+                ts = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
+            except Exception:
+                ts = 0.0
+
+        mitre_info = mitre_navigator.get_technique_info(tech)
+
+        entry = {
+            "technique":    tech,
+            "tactic":       mitre_info.get("tactic", "Unknown"),
+            "name":         mitre_info.get("name", tech),
+            "description":  mitre_info.get("description", ""),
+            "timestamp":    float(ts or 0),
+            "src_ip":       alert.get("src_ip", ""),
+            "severity":     alert.get("severity", "medium"),
+            "alert_title":  alert.get("title") or alert.get("message", ""),
+        }
+
+        # Deduplicate by technique but track first occurrence
+        if tech not in seen_techniques:
+            seen_techniques[tech] = entry
+            chain.append(entry)
+
+    # Sort chronologically
+    chain.sort(key=lambda x: x["timestamp"])
+    return {"chain": chain, "total": len(chain)}
+
+
 async def correlation_loop():
     """Periodically group alerts into incidents and trigger automated responses."""
+
     while True:
         try:
             # Run the synchronous db correlation in an executor

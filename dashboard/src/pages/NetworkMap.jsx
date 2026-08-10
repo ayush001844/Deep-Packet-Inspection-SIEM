@@ -139,16 +139,28 @@ export default function NetworkMap() {
             width={dimensions.width}
             height={dimensions.height}
             graphData={{ nodes, links }}
-            nodeLabel={node => `${node.label || node.id}\n${node.id}`}
+            nodeLabel={node => {
+              const risk = node.risk_score || 0;
+              const attack = node.ml_attack || '';
+              const type = node.node_type || 'unknown';
+              return [
+                node.label || node.id,
+                `Type: ${type}`,
+                `Risk Score: ${risk}/100`,
+                attack ? `AI Detected: ${attack}` : '',
+                `Attack Count: ${node.attack_count || 0}`,
+              ].filter(Boolean).join('\n');
+            }}
             nodeColor={node => {
-              if (node.riskScore >= 75) return '#ef4444'; // critical
-              if (node.riskScore >= 50) return '#f97316'; // high
-              if (node.riskScore >= 25) return '#f59e0b'; // medium
-              if (node.group === 1) return '#ef4444'; // legacy
-              return '#3b82f6'; // clean
+              const risk = node.risk_score || 0;
+              if (risk >= 75) return '#ef4444';
+              if (risk >= 50) return '#f97316';
+              if (risk >= 25) return '#eab308';
+              const typeColors = { database: '#8b5cf6', web_server: '#3b82f6', internal: '#22c55e', external: '#64748b' };
+              return typeColors[node.node_type] || '#3b82f6';
             }}
             nodeRelSize={6}
-            nodeVal={node => node.val || 1}
+            nodeVal={node => Math.max(1, 1 + (node.attack_count || 0) * 0.8 + (node.val || 1) * 0.4)}
             linkColor={link => link.is_suspicious ? '#ef4444' : 'rgba(255,255,255,0.15)'}
             linkWidth={link => link.is_suspicious ? 2.5 : 1}
             linkDirectionalArrowLength={4}
@@ -158,35 +170,67 @@ export default function NetworkMap() {
             onNodeClick={handleNodeClick}
             onNodeDragEnd={node => { node.fx = node.x; node.fy = node.y; }}
             nodeCanvasObject={(node, ctx, globalScale) => {
-              const label = node.label || node.id;
-              const fontSize = Math.max(10 / globalScale, 4);
-              const r = Math.sqrt(Math.max(0, node.val || 1)) * 4 + 4;
-              
-              // Draw glow for suspicious
-              if (node.riskScore >= 75 || node.group === 1) {
-                ctx.shadowColor = '#ef4444';
-                ctx.shadowBlur = 12;
-              } else if (node.riskScore >= 50) {
-                ctx.shadowColor = '#f97316';
-                ctx.shadowBlur = 10;
-              } else if (node.riskScore >= 25) {
-                ctx.shadowColor = '#f59e0b';
-                ctx.shadowBlur = 8;
+              const label = (node.label || node.id).split('.').slice(-2).join('.');
+              const fontSize = Math.max(10 / globalScale, 3.5);
+              const risk = node.risk_score || 0;
+              const attackCount = node.attack_count || 0;
+              // Size: base + attack_count contribution
+              const r = Math.sqrt(Math.max(0, node.val || 1)) * 3 + 4 + Math.min(attackCount * 0.5, 6);
+
+              // Glow color
+              const glowColor = risk >= 75 ? '#ef4444' : risk >= 50 ? '#f97316' : risk >= 25 ? '#eab308' : null;
+              if (glowColor) { ctx.shadowColor = glowColor; ctx.shadowBlur = 14; }
+
+              // Node shape by type
+              const nodeType = node.node_type || 'unknown';
+              const fillColor = risk >= 75 ? '#ef4444' : risk >= 50 ? '#f97316' : risk >= 25 ? '#eab308'
+                : nodeType === 'database' ? '#8b5cf6' : nodeType === 'web_server' ? '#3b82f6'
+                : nodeType === 'internal' ? '#22c55e' : nodeType === 'attacker' ? '#ef4444' : '#64748b';
+
+              ctx.fillStyle = fillColor;
+
+              if (nodeType === 'database') {
+                // Diamond shape for databases
+                ctx.beginPath();
+                ctx.moveTo(node.x, node.y - r * 1.2);
+                ctx.lineTo(node.x + r * 1.2, node.y);
+                ctx.lineTo(node.x, node.y + r * 1.2);
+                ctx.lineTo(node.x - r * 1.2, node.y);
+                ctx.closePath();
+                ctx.fill();
+              } else if (nodeType === 'attacker') {
+                // Star/alert shape
+                ctx.beginPath();
+                for (let i = 0; i < 6; i++) {
+                  const angle = (i * Math.PI) / 3;
+                  const rr = i % 2 === 0 ? r * 1.3 : r * 0.65;
+                  i === 0 ? ctx.moveTo(node.x + rr * Math.cos(angle), node.y + rr * Math.sin(angle))
+                          : ctx.lineTo(node.x + rr * Math.cos(angle), node.y + rr * Math.sin(angle));
+                }
+                ctx.closePath();
+                ctx.fill();
+              } else {
+                // Circle for all others
+                ctx.beginPath();
+                ctx.arc(node.x, node.y, r, 0, 2 * Math.PI);
+                ctx.fill();
               }
-              
-              // Draw circle
-              ctx.beginPath();
-              ctx.arc(node.x, node.y, r, 0, 2 * Math.PI, false);
-              ctx.fillStyle = node.group === 1 ? '#ef4444' : '#3b82f6';
-              ctx.fill();
               ctx.shadowBlur = 0;
-              
+
               // Draw label
               ctx.font = `${fontSize}px Inter, sans-serif`;
               ctx.textAlign = 'center';
-              ctx.textBaseline = 'middle';
-              ctx.fillStyle = 'rgba(255,255,255,0.85)';
-              ctx.fillText(label, node.x, node.y + r + fontSize + 2);
+              ctx.textBaseline = 'top';
+              ctx.fillStyle = 'rgba(255,255,255,0.8)';
+              ctx.fillText(label, node.x, node.y + r + 3);
+
+              // Risk badge on high-risk nodes
+              if (risk >= 25) {
+                const badgeFontSize = Math.max(8 / globalScale, 3);
+                ctx.font = `bold ${badgeFontSize}px Inter, sans-serif`;
+                ctx.fillStyle = glowColor || '#eab308';
+                ctx.fillText(`${risk}`, node.x, node.y - r - badgeFontSize - 1);
+              }
             }}
           />
         ) : (
@@ -201,20 +245,27 @@ export default function NetworkMap() {
           padding: '12px 16px',
           borderRadius: '10px',
           border: '1px solid var(--border)',
-          minWidth: '160px',
+          minWidth: '185px',
         }}>
-          <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Legend</h4>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#3b82f6', boxShadow: '0 0 6px #3b82f6' }}></div>
-            <span style={{ fontSize: '0.85rem' }}>Normal Host</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
-            <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#ef4444', boxShadow: '0 0 6px #ef4444' }}></div>
-            <span style={{ fontSize: '0.85rem' }}>Suspicious / Blocked</span>
-          </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ width: '20px', height: '2px', backgroundColor: '#ef4444' }}></div>
-            <span style={{ fontSize: '0.85rem' }}>Suspicious Flow</span>
+          <h4 style={{ margin: '0 0 10px 0', fontSize: '0.8rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>Intelligence Legend</h4>
+          {[
+            { color: '#22c55e', label: 'Internal Host (safe)', shape: 'circle' },
+            { color: '#3b82f6', label: 'Web Server',           shape: 'circle' },
+            { color: '#8b5cf6', label: 'Database ◆',          shape: 'diamond' },
+            { color: '#eab308', label: 'Medium Risk (25+)',    shape: 'circle' },
+            { color: '#f97316', label: 'High Risk (50+)',      shape: 'circle' },
+            { color: '#ef4444', label: 'Attacker ★ (75+)',    shape: 'star' },
+          ].map(({ color, label }) => (
+            <div key={label} style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '7px' }}>
+              <div style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: color, boxShadow: `0 0 6px ${color}`, flexShrink: 0 }} />
+              <span style={{ fontSize: '0.78rem' }}>{label}</span>
+            </div>
+          ))}
+          <div style={{ marginTop: 8, paddingTop: 8, borderTop: '1px solid var(--border-subtle)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <div style={{ width: '20px', height: '2px', backgroundColor: '#ef4444' }} />
+              <span style={{ fontSize: '0.78rem' }}>Suspicious Flow</span>
+            </div>
           </div>
         </div>
 
@@ -226,7 +277,8 @@ export default function NetworkMap() {
           {[
             { label: 'Hosts', value: nodes.length, color: '#3b82f6' },
             { label: 'Flows', value: links.length, color: '#8b5cf6' },
-            { label: 'Suspicious', value: nodes.filter(n => n.group === 1).length, color: '#ef4444' },
+            { label: 'Attackers', value: nodes.filter(n => n.node_type === 'attacker' || n.group === 1).length, color: '#ef4444' },
+            { label: 'High Risk', value: nodes.filter(n => (n.risk_score || 0) >= 50).length, color: '#f97316' },
           ].map(stat => (
             <div key={stat.label} style={{
               backgroundColor: 'rgba(15,15,20,0.85)',

@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Shield, Target, BarChart3, Info, RefreshCw } from 'lucide-react';
+import { Shield, Target, BarChart3, Info, RefreshCw, Link2 } from 'lucide-react';
 
 const API = 'http://localhost:8000';
 
@@ -39,8 +39,10 @@ const HEAT_BADGE_COLORS = {
 export default function MitreNavigator() {
   const [matrixData, setMatrixData] = useState(null);
   const [coverageData, setCoverageData] = useState(null);
+  const [attackChain, setAttackChain] = useState(null);
   const [selectedTechnique, setSelectedTechnique] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('matrix'); // 'matrix' or 'chain'
 
   const token = localStorage.getItem('access_token');
   const headers = { Authorization: `Bearer ${token}` };
@@ -48,12 +50,14 @@ export default function MitreNavigator() {
   const fetchData = useCallback(async () => {
     setLoading(true);
     try {
-      const [matrixRes, coverageRes] = await Promise.all([
+      const [matrixRes, coverageRes, chainRes] = await Promise.all([
         fetch(`${API}/api/mitre/matrix`, { headers }),
         fetch(`${API}/api/mitre/coverage`, { headers }),
+        fetch(`${API}/api/mitre/attack-chain`, { headers }),
       ]);
       if (matrixRes.ok) setMatrixData(await matrixRes.json());
       if (coverageRes.ok) setCoverageData(await coverageRes.json());
+      if (chainRes.ok) setAttackChain(await chainRes.json());
     } catch (err) {
       console.error('Failed to fetch MITRE data:', err);
     } finally {
@@ -105,8 +109,88 @@ export default function MitreNavigator() {
         </div>
       </div>
 
-      {/* Coverage Bars */}
-      {coverageData && (
+      <div style={{ display: 'flex', gap: 4, marginBottom: 20 }}>
+        {['matrix', 'chain'].map(t => (
+          <button
+            key={t}
+            onClick={() => setActiveTab(t)}
+            style={{
+              padding: '8px 20px', borderRadius: 8, border: 'none', cursor: 'pointer',
+              fontWeight: 600, fontSize: '0.82rem',
+              background: activeTab === t ? 'var(--accent)' : 'var(--bg-elevated)',
+              color: activeTab === t ? '#fff' : 'var(--text-secondary)',
+              transition: 'all 0.2s',
+            }}
+          >
+            {t === 'matrix' ? 'ATT&CK Matrix' : 'Attack Chain'}
+          </button>
+        ))}
+      </div>
+
+      {activeTab === 'chain' && attackChain && (
+        <div className="mitre-attack-chain">
+          <div style={{ padding: '20px', background: 'var(--bg-card)', borderRadius: '12px' }}>
+            <h3 style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '24px' }}>
+              <Link2 size={20} color="var(--accent)" />
+              Detected Attack Timeline
+            </h3>
+            {attackChain.chain && attackChain.chain.length > 0 ? (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '16px' }}>
+                {attackChain.chain.map((step, idx) => (
+                  <div key={idx} style={{
+                    display: 'flex', gap: '16px', alignItems: 'stretch'
+                  }}>
+                    {/* Timeline line and dot */}
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                      <div style={{
+                        width: '12px', height: '12px', borderRadius: '50%',
+                        background: 'var(--accent)',
+                        boxShadow: '0 0 8px var(--accent)',
+                        zIndex: 1
+                      }} />
+                      {idx < attackChain.chain.length - 1 && (
+                        <div style={{ flex: 1, width: '2px', background: 'var(--border-subtle)', margin: '4px 0' }} />
+                      )}
+                    </div>
+                    {/* Content */}
+                    <div style={{
+                      flex: 1, padding: '16px', borderRadius: '8px',
+                      background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)',
+                      marginBottom: idx < attackChain.chain.length - 1 ? '0' : '16px'
+                    }}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '8px' }}>
+                        <div>
+                          <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                            {new Date(step.timestamp * 1000).toLocaleTimeString()}
+                          </span>
+                          <div style={{ fontWeight: 600, fontSize: '0.95rem', color: 'var(--text-primary)', marginTop: '4px' }}>
+                            {step.technique} - {step.name}
+                          </div>
+                        </div>
+                        <span className={`severity-badge ${step.severity.toLowerCase()}`} style={{ height: 'fit-content' }}>
+                          {step.severity.toUpperCase()}
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', marginBottom: '8px' }}>
+                        <strong>Tactic:</strong> {step.tactic}
+                      </div>
+                      {step.src_ip && (
+                        <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                          <strong>Source IP:</strong> {step.src_ip}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: 'var(--text-muted)' }}>No attack chain data available.</p>
+            )}
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'matrix' && coverageData && (
         <div className="mitre-coverage-section">
           <h3>Tactic Coverage</h3>
           <div className="mitre-coverage-grid">
@@ -188,7 +272,12 @@ export default function MitreNavigator() {
       </div>
 
       {/* Technique Detail Panel */}
-      {selectedTechnique && (
+          </div>
+        </div>
+      )}
+      
+      {/* Detail Panel */}
+      {selectedTechnique && activeTab === 'matrix' && (
         <div className="mitre-detail-panel">
           <div className="mitre-detail-header">
             <Info size={16} />
