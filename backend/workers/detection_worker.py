@@ -11,7 +11,7 @@ from backend import mq
 from backend.dpi.session_tracker import SessionTracker
 from backend.detection.ids import ids_engine
 from backend.detection.classifier import classifier
-from backend.ml.predictor import predictor as ml_predictor
+from backend.ml_engine.predict import ml_predictor
 from backend.db.elastic import index_packet, index_alert
 from backend.db.database import save_alert, init_db
 from backend.threat.geoip import get_location
@@ -71,15 +71,16 @@ def process_packet(record: dict) -> None:
             firewall.block_ip(flow.src_ip, reason=f"IDS Alert: {ids_alert['title']}")
             
         # ML Engine (per-session prediction)
-        ml_result = ml_predictor.predict_flow(flow)
-        if ml_result["is_attack"] and ml_result["confidence"] > 0.85:
+        flow_data = flow.to_dict()
+        ml_alert_data = ml_predictor.predict(flow_data)
+        if ml_alert_data:
             if not getattr(flow, '_ml_alerted', False):
                 flow._ml_alerted = True
                 ml_alert = {
-                    "title": f"ML Detection: {ml_result['attack']}",
-                    "description": f"AI model detected anomalous flow pattern indicative of {ml_result['attack']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
+                    "title": f"ML Detection: {ml_alert_data['attack']}",
+                    "description": f"AI model detected anomalous flow pattern indicative of {ml_alert_data['attack']}. Confidence: {ml_alert_data['confidence']*100:.1f}%\n" +
                                    f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
-                    "severity": ml_result["severity"].lower(),
+                    "severity": ml_alert_data["severity"].lower(),
                     "source": "ml_ensemble",
                     "src_ip": flow.src_ip,
                     "dst_ip": flow.dst_ip,

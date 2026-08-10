@@ -16,7 +16,7 @@ from scapy.all import rdpcap, PcapReader as ScapyPcapReader
 
 from backend.dpi.protocol_parser import parse_packet
 from backend.dpi.session_tracker import SessionTracker
-from backend.ml.predictor import predictor as ml_predictor
+from backend.ml_engine.predict import ml_predictor
 from backend.detection.ids import ids_engine
 from backend.db.database import save_alert
 from backend.detection.risk_scoring import risk_scorer
@@ -133,40 +133,27 @@ def analyse_pcap(filepath: str, max_packets: int = 0) -> dict[str, Any]:
             save_alert(**alert_data)
             pcap_alerts.append(alert_data)
             
-        # Run ML Inference
-        if ml_predictor.is_loaded and getattr(flow, 'total_packets', 0) > 3:
-            ml_result = ml_predictor.predict_flow(flow)
-            
-            # Format prediction for the dashboard feed
-            # (We import recent_ml_alerts dynamically to avoid circular import)
-            from backend.main import recent_ml_alerts
-            recent_ml_alerts.append({
-                "timestamp": time.time(),
-                "src_ip": flow.src_ip,
-                "dst_ip": flow.dst_ip,
-                "attack_type": ml_result["attack"],
-                "confidence": ml_result["confidence"],
-                "is_attack": ml_result["is_attack"]
-            })
-            
-            if ml_result["is_attack"] and ml_result["confidence"] > 0.85:
-                if not getattr(flow, '_ml_alerted', False):
-                    flow._ml_alerted = True
-                    ml_alert = {
-                        "title": f"ML Detection: {ml_result['attack']}",
-                        "description": f"[From PCAP] AI model detected anomalous flow pattern indicative of {ml_result['attack']}. Confidence: {ml_result['confidence']*100:.1f}%\n" +
-                                       f"Packets: {flow.total_packets}, Bytes: {flow.total_bytes}, Duration: {getattr(flow, 'duration', 0.0):.2f}s",
-                        "severity": ml_result["severity"].lower(),
-                        "source": "ml_ensemble",
-                        "src_ip": flow.src_ip,
-                        "dst_ip": flow.dst_ip,
-                        "cvss_score": 8.0,
-                        "raw_data": ml_result
-                    }
-                    ml_alert = classifier.classify(ml_alert)
-                    save_alert(**ml_alert)
-                    pcap_alerts.append(ml_alert)
-                    risk_scorer.add_factor(flow.src_ip, "ml_high_confidence")
+        # Run ML Inference using the new AI engine
+        flow_data = flow.to_dict()
+        ml_alert = ml_predictor.predict(flow_data)
+        if ml_alert:
+            if not getattr(flow, '_ml_alerted', False):
+                flow._ml_alerted = True
+                alert_data = {
+                    "timestamp": time.time(),
+                    "src_ip": flow.src_ip,
+                    "dst_ip": flow.dst_ip,
+                    "src_port": flow.src_port,
+                    "dst_port": flow.dst_port,
+                    "rule_id": "ML_ANOMALY",
+                    "message": f"AI Engine: {ml_alert['attack']} ({ml_alert['confidence']*100:.1f}% confidence)",
+                    "severity": ml_alert['severity'].lower(),
+                    "protocol": flow.protocol
+                }
+                alert_data = classifier.classify(alert_data)
+                save_alert(**alert_data)
+                pcap_alerts.append(alert_data)
+                risk_scorer.add_factor(flow.src_ip, "ml_high_confidence")
 
     # DNS queries summary
     dns_queries: list[dict[str, str]] = []

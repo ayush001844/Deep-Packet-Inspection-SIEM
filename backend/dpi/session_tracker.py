@@ -47,6 +47,9 @@ class FlowStats:
     sni: str = ""
     http_host: str = ""
 
+    # TCP flags aggregated across the flow
+    tcp_flags: list[str] = field(default_factory=list)
+
     # Threat Intelligence
     src_geo: dict[str, Any] = field(default_factory=dict)
     dst_geo: dict[str, Any] = field(default_factory=dict)
@@ -98,6 +101,8 @@ class FlowStats:
             "dst_threat": self.dst_threat,
             "is_suspicious": self.is_suspicious,
             "alerts": self.alerts,
+            "tcp_flags": self.tcp_flags,
+            "packets": self.total_packets,
         }
 
 
@@ -263,6 +268,7 @@ class SessionTracker:
         for layer in pkt.get("layers", []):
             if layer.get("layer") == "TCP":
                 flags = layer.get("flags", [])
+                flow.tcp_flags.extend(flags)
                 break
 
         if "SYN" in flags and "ACK" not in flags:

@@ -44,7 +44,7 @@ from backend.db.database import (
 )
 from backend.detection.classifier import classifier
 from backend.db.elastic import index_packet, index_alert
-from backend.ml.predictor import predictor as ml_predictor
+from backend.ml_engine.predict import ml_predictor
 from backend.ai.assistant import security_assistant
 from backend.rate_limiter import RateLimiterMiddleware, SecurityHeadersMiddleware
 import backend.mq as mq
@@ -682,16 +682,60 @@ def lookup_threat(ip: str):
 @app.get("/api/ml/status")
 def get_ml_status(_user = Depends(get_current_user)):
     """Get status of the ML prediction engine."""
+    from backend.ml_engine.predict import ATTACK_CLASSES
     return {
-        "loaded": ml_predictor.is_loaded,
-        "classes": ml_predictor.classes,
-        "accuracy": getattr(ml_predictor, 'accuracy', 0.0)
+        "loaded": ml_predictor.model is not None,
+        "classes": list(ATTACK_CLASSES.values()),
+        "class_count": len(ATTACK_CLASSES),
+        "accuracy": 1.0 if ml_predictor.model is not None else 0.0,
+        "model_type": "RandomForestClassifier (5-class)",
     }
 
 @app.get("/api/ml/recent")
 def get_ml_recent(_user = Depends(get_current_user)):
-    """Get recent ML predictions for dashboard feed."""
-    return list(recent_ml_alerts)[::-1][:20]
+    """Get recent ML detections for dashboard feed (newest first)."""
+    return list(recent_ml_alerts)[::-1][:50]
+
+@app.get("/api/ml/stats")
+def get_ml_stats(_user = Depends(get_current_user)):
+    """Aggregate ML detection statistics for the dashboard charts."""
+    from collections import Counter
+    from backend.ml_engine.predict import ATTACK_CLASSES, SEVERITY_MAP
+
+    alerts = list(recent_ml_alerts)
+    attack_counts = Counter(a.get("attack") for a in alerts if a.get("attack") != "Normal")
+    
+    # Class distribution bar-chart data
+    class_distribution = [
+        {"attack": name, "count": attack_counts.get(name, 0), "color": _ml_color(name)}
+        for name in ATTACK_CLASSES.values() if name != "Normal"
+    ]
+
+    # Confidence trend (last 20 detections)
+    confidence_trend = [
+        {
+            "time": i,
+            "confidence": round(a.get("confidence", 0) * 100, 1),
+            "attack": a.get("attack", "")
+        }
+        for i, a in enumerate(reversed(alerts[-20:]))
+    ]
+
+    return {
+        "total_detections": len(alerts),
+        "class_distribution": class_distribution,
+        "confidence_trend": confidence_trend,
+        "top_threat": max(attack_counts, key=attack_counts.get) if attack_counts else None,
+    }
+
+def _ml_color(attack: str) -> str:
+    colors = {
+        "SSH Brute Force": "#f97316",
+        "DDoS":            "#ef4444",
+        "Port Scan":       "#a855f7",
+        "C2 Beaconing":    "#3b82f6",
+    }
+    return colors.get(attack, "#6b7280")
 
 async def correlation_loop():
     """Periodically group alerts into incidents and trigger automated responses."""

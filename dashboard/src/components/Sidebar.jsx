@@ -1,7 +1,7 @@
 import { NavLink } from 'react-router-dom';
 import { 
   Activity, Shield, List, AlertTriangle, Box, 
-  Map, Settings, Server, FileText, Clock, FileBarChart
+  Map, Settings, Server, FileText, Clock, FileBarChart, Brain
 } from 'lucide-react';
 
 const navItems = [
@@ -13,6 +13,7 @@ const navItems = [
   { label: 'Network Map', path: '/map', icon: Map },
   { label: 'Timeline', path: '/timeline', icon: Clock },
   { label: 'ATT&CK Matrix', path: '/mitre', icon: Box },
+  { label: 'AI Detection',  path: '/ml',    icon: Brain },
   { label: 'PCAP Analysis', path: '/pcap', icon: FileBarChart },
   { label: 'Rules Engine', path: '/rules', icon: FileText },
   { label: 'Settings', path: '/settings', icon: Settings },

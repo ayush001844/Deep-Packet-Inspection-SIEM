@@ -12,6 +12,7 @@ import Settings from './pages/Settings';
 import Login from './pages/Login';
 import PacketLog from './pages/PacketLog';
 import MitreNavigator from './pages/MitreNavigator';
+import MLDetections from './pages/MLDetections';
 import { useAuth } from './contexts/AuthContext';
 
 // Placeholder for other pages
@@ -45,6 +46,7 @@ export default function App() {
           <Route path="pcap" element={<PcapAnalysis />} />
           <Route path="rules" element={<Rules />} />
           <Route path="mitre" element={<MitreNavigator />} />
+          <Route path="ml" element={<MLDetections />} />
           <Route path="settings" element={<Settings />} />
         </Route>
       </Routes>
