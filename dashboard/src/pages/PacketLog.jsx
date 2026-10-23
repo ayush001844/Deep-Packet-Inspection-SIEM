@@ -22,7 +22,7 @@ export default function PacketLog() {
 
   const { data, loading, refetch } = useApi(`/api/packets?${queryParams}`, { interval: 0 });
 
-  const packets = data?.data || [];
+  const packets = data?.packets || [];
   const total = data?.total || 0;
 
   const handleFilterChange = (e) => {

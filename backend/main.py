@@ -418,20 +418,112 @@ def get_protocol_stats():
 # REST endpoints – PCAP upload & analysis
 # ---------------------------------------------------------------------------
 
+MAX_PCAP_SIZE_MB = 50
+
 @app.post("/api/pcap/upload")
 async def upload_pcap(file: UploadFile = File(...)):
-    """Upload and analyse a PCAP file."""
+    """Upload and analyse a PCAP file.
+
+    Validates file extension and size, then runs the full analysis pipeline.
+    Returns the same structure as analyse_pcap() plus an ``analysis_status``
+    field: 'completed' | 'error'.
+    """
     if not file.filename:
-        return JSONResponse(status_code=400, content={"error": "No file provided"})
+        return JSONResponse(
+            status_code=400,
+            content={"error": "No file was provided. Please select a .pcap or .pcapng file."},
+        )
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".pcap", ".pcapng"):
+        return JSONResponse(
+            status_code=400,
+            content={
+                "error": f"Invalid file type '{ext}'. Only .pcap and .pcapng files are supported.",
+                "analysis_status": "error",
+            },
+        )
+
+    # Read content and enforce size limit
+    content = await file.read()
+    size_mb = len(content) / (1024 * 1024)
+    if size_mb > MAX_PCAP_SIZE_MB:
+        return JSONResponse(
+            status_code=413,
+            content={
+                "error": f"File is too large ({size_mb:.1f} MB). Maximum allowed size is {MAX_PCAP_SIZE_MB} MB.",
+                "analysis_status": "error",
+            },
+        )
 
     # Save uploaded file
-    filepath = os.path.join(UPLOAD_DIR, file.filename)
-    with open(filepath, "wb") as f:
-        content = await file.read()
-        f.write(content)
+    safe_name = os.path.basename(file.filename)
+    filepath = os.path.join(UPLOAD_DIR, safe_name)
+    try:
+        with open(filepath, "wb") as f:
+            f.write(content)
+    except OSError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Failed to save file on server: {exc}",
+                "analysis_status": "error",
+            },
+        )
 
     # Analyse
+    try:
+        results = analyse_pcap(filepath)
+    except Exception as exc:
+        return JSONResponse(
+            status_code=500,
+            content={
+                "error": f"Analysis engine error: {exc}. The file may be corrupt or in an unsupported format.",
+                "analysis_status": "error",
+            },
+        )
+
+    if "error" in results:
+        results["analysis_status"] = "error"
+        return JSONResponse(status_code=422, content=results)
+
+    results["analysis_status"] = "completed"
+    results["file_size_bytes"] = len(content)
+    return results
+
+
+@app.get("/api/pcap/samples")
+def list_sample_pcaps():
+    """List bundled sample PCAP files that users can analyse without uploading."""
+    samples = []
+    for fname in ("sample_traffic.pcap", "ddos_attack.pcap", "test_dpi.pcap"):
+        fpath = os.path.join(UPLOAD_DIR, fname)
+        if os.path.exists(fpath):
+            size = os.path.getsize(fpath)
+            samples.append({
+                "filename": fname,
+                "size_bytes": size,
+                "description": {
+                    "sample_traffic.pcap": "Mixed benign traffic – HTTP, DNS, TLS",
+                    "ddos_attack.pcap":   "Simulated DDoS flood traffic",
+                    "test_dpi.pcap":      "Deep packet inspection test capture",
+                }.get(fname, fname),
+            })
+    return {"samples": samples}
+
+
+@app.post("/api/pcap/analyse-sample/{filename}")
+def analyse_sample_pcap(filename: str, _user=Depends(get_current_user)):
+    """Run the analysis pipeline on a bundled sample PCAP."""
+    safe = os.path.basename(filename)
+    filepath = os.path.join(UPLOAD_DIR, safe)
+    if not os.path.exists(filepath):
+        raise HTTPException(status_code=404, detail=f"Sample '{safe}' not found.")
+    ext = os.path.splitext(safe)[1].lower()
+    if ext not in (".pcap", ".pcapng"):
+        raise HTTPException(status_code=400, detail="Not a PCAP file.")
     results = analyse_pcap(filepath)
+    results["analysis_status"] = "error" if "error" in results else "completed"
     return results
 
 

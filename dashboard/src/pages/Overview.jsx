@@ -7,6 +7,7 @@ import {
   BarChart, Bar, Cell
 } from 'recharts';
 import { useEffect, useState, useRef } from 'react';
+import { WS_BASE } from '../config';
 
 const COLORS = {
   TCP: 'var(--proto-tcp)',
@@ -18,6 +19,8 @@ const COLORS = {
   SSH: 'var(--proto-ssh)',
   ICMP: 'var(--proto-icmp)'
 };
+
+const MAX_CHART_POINTS = 30;
 
 export default function Overview() {
   const { data: stats, loading } = useApi('/api/stats', { interval: 2000 });
@@ -31,9 +34,7 @@ export default function Overview() {
   const feedListRef = useRef(null);
 
   useEffect(() => {
-    // Connect to the alerts WebSocket
-    const wsBase = `ws://${window.location.hostname}:8000`;
-    const ws = new WebSocket(`${wsBase}/ws/alerts`);
+    const ws = new WebSocket(`${WS_BASE}/ws/alerts`);
     wsRef.current = ws;
 
     ws.onmessage = (event) => {
@@ -47,42 +48,37 @@ export default function Overview() {
     };
 
     ws.onclose = () => {
-      // Reconnect after 3s
       setTimeout(() => {
-        if (wsRef.current === ws) {
-          wsRef.current = null;
-        }
+        if (wsRef.current === ws) wsRef.current = null;
       }, 3000);
     };
 
     return () => ws.close();
   }, []);
   
-  // Chart data for traffic visualization
-  const [chartData, setChartData] = useState([]);
-  
+  // ── Real traffic chart: accumulates live pps from /api/stats ──────────────
+  const [chartData, setChartData] = useState(() =>
+    Array.from({ length: MAX_CHART_POINTS }, (_, i) => ({ time: i, traffic: 0, threats: 0 }))
+  );
+  const chartTickRef = useRef(0);
+
   useEffect(() => {
-    const initial = Array.from({ length: 20 }, (_, i) => ({
-      time: i,
-      traffic: Math.floor(Math.random() * 500) + 100,
-      threats: Math.floor(Math.random() * 5)
-    }));
-    setChartData(initial);
-    
-    const interval = setInterval(() => {
-      setChartData(prev => {
-        const next = [...prev.slice(1)];
-        const last = next[next.length - 1];
-        next.push({
-          time: last.time + 1,
-          traffic: Math.max(50, last.traffic + (Math.random() * 100 - 50)),
-          threats: Math.random() > 0.8 ? Math.floor(Math.random() * 3) : 0
-        });
-        return next;
-      });
-    }, 2000);
-    return () => clearInterval(interval);
-  }, []);
+    if (!stats) return;
+    const pps    = stats.packets_per_second ?? 0;
+    const alrtCt = (alerts || []).length;
+    chartTickRef.current += 1;
+    setChartData(prev => {
+      const next = [...prev.slice(1), {
+        time:    chartTickRef.current,
+        traffic: pps,
+        threats: alrtCt,
+      }];
+      return next;
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [stats]);
+
+
 
   if (loading && !stats) return <div className="empty-state">Loading dashboard...</div>;
 
@@ -229,7 +225,8 @@ export default function Overview() {
           <div className="card-header">
             <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
               <Zap size={16} color="var(--accent)" />
-              Live Network Traffic
+              Packet Rate (pps)
+              <span className="text-muted text-sm" style={{ fontWeight: 'normal', fontSize: '0.75rem' }}>live • packets per second</span>
             </h3>
           </div>
           <div style={{ height: 260 }}>
@@ -243,12 +240,14 @@ export default function Overview() {
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
                 <XAxis dataKey="time" hide />
-                <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
+                <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `${v}`} />
                 <Tooltip 
                   contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderRadius: 8 }}
                   itemStyle={{ color: 'var(--text-primary)' }}
+                  formatter={(v, name) => [`${v} pps`, 'Packet Rate']}
+                  labelFormatter={() => ''}
                 />
-                <Area type="monotone" dataKey="traffic" stroke="var(--accent)" strokeWidth={3} fillOpacity={1} fill="url(#colorTraffic)" animationDuration={300} />
+                <Area type="monotone" dataKey="traffic" stroke="var(--accent)" strokeWidth={3} fillOpacity={1} fill="url(#colorTraffic)" animationDuration={300} isAnimationActive={false} />
               </AreaChart>
             </ResponsiveContainer>
           </div>
