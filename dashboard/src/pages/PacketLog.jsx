@@ -1,16 +1,32 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useApi } from '../hooks/useApi';
-import { List, Search, ChevronLeft, ChevronRight, Activity, Filter } from 'lucide-react';
+import { List, Search, ChevronLeft, ChevronRight, Activity, Filter, RefreshCw } from 'lucide-react';
+import { SkeletonTable } from '../components/Skeleton';
 
 export default function PacketLog() {
+  const [searchParams] = useSearchParams();
   const [offset, setOffset] = useState(0);
-  const [limit, setLimit] = useState(100);
+  const [limit, setLimit] = useState(50);
   
   const [filters, setFilters] = useState({
     protocol: '',
     src_ip: '',
     dst_ip: '',
   });
+
+  // Handle URL query parameters from Global Search
+  useEffect(() => {
+    const filterParam = searchParams.get('filter');
+    const portParam = searchParams.get('port');
+    if (filterParam) {
+      if (filterParam.includes('.') || filterParam.includes(':')) {
+        setFilters(prev => ({ ...prev, src_ip: filterParam }));
+      } else {
+        setFilters(prev => ({ ...prev, protocol: filterParam }));
+      }
+    }
+  }, [searchParams]);
 
   const queryParams = new URLSearchParams({
     limit,
@@ -28,16 +44,21 @@ export default function PacketLog() {
   const handleFilterChange = (e) => {
     const { name, value } = e.target;
     setFilters(prev => ({ ...prev, [name]: value }));
-    setOffset(0); // Reset to first page on filter change
+    setOffset(0);
   };
 
   const handleApplyFilters = () => {
     refetch();
   };
 
+  const handleResetFilters = () => {
+    setFilters({ protocol: '', src_ip: '', dst_ip: '' });
+    setOffset(0);
+  };
+
   const getProtoClass = (proto) => proto ? proto.toLowerCase() : '';
 
-  const totalPages = Math.ceil(total / limit);
+  const totalPages = Math.max(1, Math.ceil(total / limit));
   const currentPage = Math.floor(offset / limit) + 1;
 
   const handlePrevPage = () => {
@@ -52,15 +73,22 @@ export default function PacketLog() {
     <div className="fade-in flex-col" style={{ height: '100%', display: 'flex', gap: 20 }}>
       {/* ── Header & Filters ── */}
       <div className="card" style={{ padding: '20px' }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 20 }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 16 }}>
           <h2 style={{ margin: 0, display: 'flex', alignItems: 'center', gap: 10 }}>
-            <List size={24} color="var(--accent)" />
-            Packet Log
+            <List size={22} color="var(--accent)" />
+            Packet Log & Deep Inspection
           </h2>
+          <button 
+            className="btn btn-secondary btn-sm" 
+            onClick={() => refetch()}
+            style={{ display: 'flex', alignItems: 'center', gap: 6 }}
+          >
+            <RefreshCw size={14} /> Refresh
+          </button>
         </div>
 
-        <div style={{ display: 'flex', gap: 15, flexWrap: 'wrap' }}>
-          <div style={{ flex: 1, minWidth: 200 }}>
+        <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+          <div style={{ flex: 1, minWidth: 180 }}>
             <label className="text-sm text-muted block mb-1">Protocol</label>
             <div className="relative">
               <Filter size={14} className="text-muted" style={{ position: 'absolute', left: 10, top: 12 }} />
@@ -68,7 +96,7 @@ export default function PacketLog() {
                 type="text" 
                 name="protocol"
                 className="input w-full" 
-                placeholder="e.g. TCP, UDP, DNS" 
+                placeholder="e.g. TCP, UDP, DNS, TLS" 
                 value={filters.protocol}
                 onChange={handleFilterChange}
                 style={{ paddingLeft: 30 }}
@@ -108,9 +136,12 @@ export default function PacketLog() {
               />
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'flex-end' }}>
+          <div style={{ display: 'flex', gap: 8 }}>
             <button className="btn btn-primary" onClick={handleApplyFilters}>
-              Search
+              Filter
+            </button>
+            <button className="btn btn-secondary" onClick={handleResetFilters}>
+              Reset
             </button>
           </div>
         </div>
@@ -118,55 +149,68 @@ export default function PacketLog() {
 
       {/* ── Packet Table ── */}
       <div className="card" style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', padding: 0 }}>
-        <div className="card-header" style={{ padding: '16px 20px', margin: 0, borderBottom: '1px solid var(--border-default)', backgroundColor: 'var(--bg-elevated)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <h3 className="card-title flex items-center gap-2">
+        <div className="card-header" style={{ padding: '14px 20px', margin: 0, borderBottom: '1px solid var(--border-default)', backgroundColor: 'var(--bg-elevated)', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <h3 className="card-title flex items-center gap-2" style={{ margin: 0 }}>
             <Activity size={16} /> 
-            Historical Packets
+            Captured Packets
             <span className="text-muted text-sm" style={{ fontWeight: 'normal' }}>
-              ({total} packets found)
+              ({total.toLocaleString()} total)
             </span>
           </h3>
           
-          <div className="flex items-center gap-4 text-sm">
-            <span className="text-muted">
-              Page {currentPage} of {totalPages || 1}
-            </span>
-            <div className="flex gap-2">
-              <button 
-                className="btn btn-secondary" 
-                style={{ padding: '6px 12px', minWidth: 'unset' }}
-                onClick={handlePrevPage}
-                disabled={offset === 0}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13 }} className="text-muted">
+              <span>Page size:</span>
+              <select 
+                className="input" 
+                value={limit} 
+                onChange={e => { setLimit(Number(e.target.value)); setOffset(0); }}
+                style={{ padding: '4px 8px', fontSize: 12 }}
               >
-                <ChevronLeft size={16} /> Prev
-              </button>
-              <button 
-                className="btn btn-secondary" 
-                style={{ padding: '6px 12px', minWidth: 'unset' }}
-                onClick={handleNextPage}
-                disabled={offset + limit >= total}
-              >
-                Next <ChevronRight size={16} />
-              </button>
+                <option value={25}>25</option>
+                <option value={50}>50</option>
+                <option value={100}>100</option>
+              </select>
+            </div>
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              <span className="text-muted" style={{ fontSize: 13 }}>
+                Page {currentPage} of {totalPages}
+              </span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                <button 
+                  className="btn btn-secondary btn-sm" 
+                  onClick={handlePrevPage}
+                  disabled={offset === 0}
+                >
+                  <ChevronLeft size={14} /> Prev
+                </button>
+                <button 
+                  className="btn btn-secondary btn-sm" 
+                  onClick={handleNextPage}
+                  disabled={offset + limit >= total}
+                >
+                  Next <ChevronRight size={14} />
+                </button>
+              </div>
             </div>
           </div>
         </div>
         
-        <div className="table-container" style={{ flex: 1, border: 'none', borderRadius: 0 }}>
+        <div className="table-responsive" style={{ flex: 1, border: 'none', borderRadius: 0 }}>
           {loading && packets.length === 0 ? (
-            <div className="empty-state" style={{ height: 300 }}>
-              <Activity size={48} className="spin" />
-              <h3>Loading packets...</h3>
+            <div style={{ padding: 16 }}>
+              <SkeletonTable rows={10} cols={7} />
             </div>
           ) : (
-            <table>
+            <table className="table">
               <thead>
                 <tr>
                   <th style={{ width: 80 }}>No.</th>
-                  <th style={{ width: 100 }}>Time</th>
-                  <th style={{ width: 140 }}>Source</th>
-                  <th style={{ width: 140 }}>Destination</th>
-                  <th style={{ width: 80 }}>Protocol</th>
+                  <th style={{ width: 110 }}>Time</th>
+                  <th style={{ width: 160 }}>Source</th>
+                  <th style={{ width: 160 }}>Destination</th>
+                  <th style={{ width: 90 }}>Protocol</th>
                   <th style={{ width: 80 }}>Length</th>
                   <th>Info</th>
                 </tr>
@@ -175,30 +219,34 @@ export default function PacketLog() {
                 {packets.length > 0 ? (
                   packets.map((pkt, i) => (
                     <tr key={pkt.id || i}>
-                      <td className="text-muted">{pkt.id}</td>
-                      <td className="font-mono text-sm">{new Date(pkt.timestamp * 1000).toISOString().split('T')[1].slice(0,-1)}</td>
-                      <td className="font-mono text-sm">{pkt.src_ip || pkt.src_mac || '-'} {pkt.src_port ? `:${pkt.src_port}` : ''}</td>
-                      <td className="font-mono text-sm">{pkt.dst_ip || pkt.dst_mac || '-'} {pkt.dst_port ? `:${pkt.dst_port}` : ''}</td>
+                      <td className="text-muted mono" style={{ fontSize: 12 }}>{pkt.id}</td>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        {pkt.timestamp ? new Date(pkt.timestamp * 1000).toLocaleTimeString() : '—'}
+                      </td>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        <span>{pkt.src_ip || pkt.src_mac || '-'}</span>
+                        {pkt.src_port && <span className="text-muted">:{pkt.src_port}</span>}
+                      </td>
+                      <td className="mono" style={{ fontSize: 12 }}>
+                        <span>{pkt.dst_ip || pkt.dst_mac || '-'}</span>
+                        {pkt.dst_port && <span className="text-muted">:{pkt.dst_port}</span>}
+                      </td>
                       <td>
-                        <span className={`proto-badge ${getProtoClass(pkt.protocol)}`}>
+                        <span className={`badge badge-proto badge-${getProtoClass(pkt.protocol)}`}>
                           {pkt.protocol || 'Unknown'}
                         </span>
                       </td>
-                      <td>{pkt.length}</td>
-                      <td className="text-sm truncate" style={{ maxWidth: 300 }} title={pkt.summary}>
+                      <td className="mono" style={{ fontSize: 12 }}>{pkt.length} B</td>
+                      <td className="text-sm truncate" style={{ maxWidth: 380 }} title={pkt.summary}>
                         {(() => {
-                          // Check for HTTP
                           const http = pkt.layers?.find(l => l.layer === 'HTTP' && l.direction === 'request');
                           if (http) return <span style={{ color: 'var(--accent)' }}>{http.method} {http.host}{http.url}</span>;
                           
-                          // Check for DNS
                           const dns = pkt.layers?.find(l => l.layer === 'DNS' && l.type === 'query');
-                          if (dns) return <span style={{ color: 'var(--warning)' }}>DNS: {dns.query_name}</span>;
+                          if (dns) return <span style={{ color: 'var(--proto-dns)' }}>DNS: {dns.query_name}</span>;
                           
-                          // Check for TLS SNI
-                          if (pkt.sni) return <span style={{ color: 'var(--success)' }}>TLS SNI: {pkt.sni}</span>;
+                          if (pkt.sni) return <span style={{ color: 'var(--proto-tls)' }}>TLS SNI: {pkt.sni}</span>;
                           
-                          // Fallback
                           return pkt.summary;
                         })()}
                       </td>
@@ -206,10 +254,10 @@ export default function PacketLog() {
                   ))
                 ) : (
                   <tr>
-                    <td colSpan="7" className="empty-state" style={{ height: 300 }}>
-                      <List size={48} />
+                    <td colSpan="7" className="empty-state" style={{ height: 260 }}>
+                      <List size={40} style={{ opacity: 0.3, marginBottom: 8 }} />
                       <h3>No packets found</h3>
-                      <p>Try adjusting your filters or capture more traffic.</p>
+                      <p className="text-muted">No packets matched your filter conditions.</p>
                     </td>
                   </tr>
                 )}

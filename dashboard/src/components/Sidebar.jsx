@@ -1,85 +1,116 @@
+import React from 'react';
 import { NavLink } from 'react-router-dom';
 import { 
-  Activity, Shield, List, AlertTriangle, Box, 
-  Map, Settings, Server, FileText, Clock, FileBarChart, Brain, Radar, Users
+  Activity, ShieldAlert, List, AlertTriangle, Box, 
+  Map, Settings, Server, FileText, Clock, FileBarChart, 
+  Brain, Radar, Users, Share2, Radio, X, Cpu, ShieldCheck
 } from 'lucide-react';
 
-const navItems = [
-  { label: 'Overview', path: '/', icon: Activity },
-  { label: 'Live Capture', path: '/capture', icon: Radio },
-  { label: 'Packet Log', path: '/packets', icon: List },
-  { label: 'Threats', path: '/threats', icon: Shield },
-  { label: 'Incidents', path: '/incidents', icon: AlertTriangle },
-  { label: 'Network Map', path: '/map', icon: Map },
-  { label: 'Timeline', path: '/timeline', icon: Clock },
-  { label: 'ATT&CK Matrix', path: '/mitre', icon: Box },
-  { label: 'AI Detection',  path: '/ml',    icon: Brain },
-  { label: 'Anomaly Detection', path: '/anomaly', icon: Radar },
-  { label: 'UEBA', path: '/ueba', icon: Users },
-  { label: 'PCAP Analysis', path: '/pcap', icon: FileBarChart },
-  { label: 'Rules Engine', path: '/rules', icon: FileText },
-  { label: 'Settings', path: '/settings', icon: Settings },
+const navSections = [
+  {
+    title: 'OVERVIEW',
+    items: [
+      { label: 'Overview', path: '/', icon: Activity },
+    ],
+  },
+  {
+    title: 'TRAFFIC ANALYSIS',
+    items: [
+      { label: 'Live Capture', path: '/capture', icon: Radio },
+      { label: 'Packet Log', path: '/packets', icon: List },
+      { label: 'PCAP Analysis', path: '/pcap', icon: FileBarChart },
+    ],
+  },
+  {
+    title: 'FLOWS',
+    items: [
+      { label: 'Active Flows', path: '/flows', icon: Share2 },
+    ],
+  },
+  {
+    title: 'THREAT DETECTION',
+    items: [
+      { label: 'Security Alerts', path: '/threats', icon: ShieldAlert },
+      { label: 'Incidents', path: '/incidents', icon: AlertTriangle },
+      { label: 'Attack Timeline', path: '/timeline', icon: Clock },
+      { label: 'Network Map', path: '/map', icon: Map },
+      { label: 'ATT&CK Matrix', path: '/mitre', icon: Box },
+      { label: 'AI Detection', path: '/ml', icon: Brain },
+      { label: 'Anomaly Detection', path: '/anomaly', icon: Radar },
+      { label: 'UEBA', path: '/ueba', icon: Users },
+    ],
+  },
+  {
+    title: 'RULES & SYSTEM',
+    items: [
+      { label: 'Detection Rules', path: '/rules', icon: FileText },
+      { label: 'Settings', path: '/settings', icon: Settings },
+    ],
+  },
 ];
 
-function Radio(props) {
+export default function Sidebar({ isMobileOpen = false, onCloseMobile = () => {} }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" {...props}>
-      <circle cx="12" cy="12" r="2" />
-      <path d="M16.24 7.76a6 6 0 0 1 0 8.49m-8.48-.01a6 6 0 0 1 0-8.49m11.31-2.82a10 10 0 0 1 0 14.14m-14.14 0a10 10 0 0 1 0-14.14" />
-    </svg>
-  );
-}
+    <>
+      {/* Mobile Backdrop */}
+      {isMobileOpen && (
+        <div 
+          className="sidebar-backdrop" 
+          onClick={onCloseMobile} 
+          aria-label="Close navigation"
+        />
+      )}
 
-export default function Sidebar() {
-  return (
-    <aside className="sidebar">
-      <div className="sidebar-brand">
-        <div className="sidebar-brand-icon">
-          <Server size={20} color="white" />
+      <aside className={`sidebar ${isMobileOpen ? 'mobile-open' : ''}`}>
+        <div className="sidebar-brand">
+          <div className="sidebar-brand-icon">
+            <Server size={22} color="white" />
+          </div>
+          <div className="sidebar-brand-text">
+            <h1>PacketAnalyzer-Pro</h1>
+            <span>SOC & SIEM Platform</span>
+          </div>
+          {isMobileOpen && (
+            <button 
+              className="sidebar-mobile-close" 
+              onClick={onCloseMobile}
+              aria-label="Close sidebar"
+            >
+              <X size={20} />
+            </button>
+          )}
         </div>
-        <div>
-          <h1>PacketAnalyzer-Pro</h1>
-          <span>SOC & SIEM Platform</span>
+        
+        <nav className="sidebar-nav">
+          {navSections.map(section => (
+            <div key={section.title} className="sidebar-section">
+              <div className="sidebar-section-label">{section.title}</div>
+              {section.items.map(item => (
+                <NavLink 
+                  key={item.path} 
+                  to={item.path} 
+                  className={({ isActive }) => `sidebar-link ${isActive ? 'active' : ''}`}
+                  onClick={onCloseMobile}
+                >
+                  <item.icon size={18} className="sidebar-item-icon" />
+                  <span>{item.label}</span>
+                </NavLink>
+              ))}
+            </div>
+          ))}
+        </nav>
+
+        {/* Engine status footer */}
+        <div className="sidebar-footer">
+          <div className="engine-status-pill">
+            <span className="live-dot" />
+            <div className="engine-status-text">
+              <div className="engine-status-title">DPI Engine Active</div>
+              <div className="engine-status-sub">Zero-Packet Drop Buffer</div>
+            </div>
+          </div>
         </div>
-      </div>
-      
-      <nav className="sidebar-nav">
-        <div className="sidebar-section-label">Dashboard</div>
-        {navItems.slice(0, 3).map(item => (
-          <NavLink 
-            key={item.path} 
-            to={item.path} 
-            className={({isActive}) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <item.icon />
-            {item.label}
-          </NavLink>
-        ))}
-        
-        <div className="sidebar-section-label" style={{marginTop: 16}}>Security</div>
-        {navItems.slice(3, 8).map(item => (
-          <NavLink 
-            key={item.path} 
-            to={item.path} 
-            className={({isActive}) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <item.icon />
-            {item.label}
-          </NavLink>
-        ))}
-        
-        <div className="sidebar-section-label" style={{marginTop: 16}}>Tools</div>
-        {navItems.slice(8).map(item => (
-          <NavLink 
-            key={item.path} 
-            to={item.path} 
-            className={({isActive}) => `sidebar-link ${isActive ? 'active' : ''}`}
-          >
-            <item.icon />
-            {item.label}
-          </NavLink>
-        ))}
-      </nav>
-    </aside>
+      </aside>
+    </>
   );
 }

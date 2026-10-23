@@ -146,8 +146,11 @@ packet_counter = {"count": 0}
 # Protocol distribution running counter
 protocol_stats: dict[str, int] = {}
 
-# Packet rate tracking (packets per second)
-rate_tracker = {"timestamps": deque(maxlen=1000)}
+# Packet rate and throughput tracking (pps & bytes/sec)
+rate_tracker = {
+    "timestamps": deque(maxlen=2000),
+    "bytes": deque(maxlen=2000),
+}
 
 # Upload directory
 UPLOAD_DIR = os.path.join(os.path.dirname(__file__), "data", "uploads")
@@ -174,8 +177,10 @@ def _on_packet(raw_pkt) -> None:
     proto = record.get("protocol", "Unknown")
     protocol_stats[proto] = protocol_stats.get(proto, 0) + 1
 
-    # Track rate
-    rate_tracker["timestamps"].append(time.time())
+    # Track rate & throughput
+    now_ts = time.time()
+    rate_tracker["timestamps"].append(now_ts)
+    rate_tracker["bytes"].append((now_ts, record.get("length", 0)))
 
     # Store in ring buffer
     recent_packets.append(record)
@@ -384,15 +389,24 @@ def get_stats():
     """Get aggregate statistics."""
     flow_stats = session_tracker.get_stats()
 
-    # Calculate packets per second
+    # Calculate packets per second and bytes per second (throughput)
     now = time.time()
     timestamps = rate_tracker["timestamps"]
     recent = sum(1 for t in timestamps if now - t < 1.0)
+    byte_records = rate_tracker.get("bytes", [])
+    recent_bytes = sum(b for t, b in byte_records if now - t < 1.0)
+
+    try:
+        blocked_count = len(firewall.get_blocked_ips())
+    except Exception:
+        blocked_count = 0
 
     return {
         "capture": sniffer.get_status(),
         "packets_total": packet_counter["count"],
         "packets_per_second": recent,
+        "bytes_per_second": recent_bytes,
+        "blocked_count": blocked_count,
         "protocol_distribution": protocol_stats,
         "flows": flow_stats,
     }

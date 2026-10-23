@@ -11,6 +11,7 @@ import NetworkMap from './pages/NetworkMap';
 import Settings from './pages/Settings';
 import Login from './pages/Login';
 import PacketLog from './pages/PacketLog';
+import Flows from './pages/Flows';
 import MitreNavigator from './pages/MitreNavigator';
 import MLDetections from './pages/MLDetections';
 import AnomalyDetection from './pages/AnomalyDetection';
@@ -41,6 +42,7 @@ export default function App() {
           <Route index element={<Overview />} />
           <Route path="capture" element={<LiveCapture />} />
           <Route path="packets" element={<PacketLog />} />
+          <Route path="flows" element={<Flows />} />
           <Route path="threats" element={<Threats />} />
           <Route path="incidents" element={<Incidents />} />
           <Route path="map" element={<NetworkMap />} />

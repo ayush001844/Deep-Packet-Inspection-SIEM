@@ -1,15 +1,20 @@
+import React, { useEffect, useState, useRef, useMemo } from 'react';
 import { useApi } from '../hooks/useApi';
 import StatCard from '../components/StatCard';
 import GeoMap from '../components/GeoMap';
-import { Activity, ShieldAlert, Globe, Server, Gauge, Zap, Radio } from 'lucide-react';
+import { 
+  Activity, ShieldAlert, Globe, Server, Zap, Radio, 
+  Ban, HardDrive, Filter, Maximize2, RefreshCw, AlertTriangle
+} from 'lucide-react';
 import { 
   AreaChart, Area, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  BarChart, Bar, Cell
+  BarChart, Bar, Cell, Brush
 } from 'recharts';
-import { useEffect, useState, useRef } from 'react';
 import { WS_BASE } from '../config';
+import { SkeletonCard, SkeletonChart, SkeletonList } from '../components/Skeleton';
+import { normalizeSeverity } from '../utils/severity';
 
-const COLORS = {
+const PROTO_COLORS = {
   TCP: 'var(--proto-tcp)',
   UDP: 'var(--proto-udp)',
   HTTP: 'var(--proto-http)',
@@ -17,21 +22,42 @@ const COLORS = {
   TLS: 'var(--proto-tls)',
   DNS: 'var(--proto-dns)',
   SSH: 'var(--proto-ssh)',
-  ICMP: 'var(--proto-icmp)'
+  ICMP: 'var(--proto-icmp)',
 };
 
-const MAX_CHART_POINTS = 30;
+function formatThroughput(bytesPerSec) {
+  if (!bytesPerSec || bytesPerSec === 0) return '0 B/s';
+  if (bytesPerSec < 1024) return `${bytesPerSec.toFixed(0)} B/s`;
+  if (bytesPerSec < 1024 * 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  return `${(bytesPerSec / (1024 * 1024)).toFixed(2)} MB/s`;
+}
+
+function formatBytes(bytes) {
+  if (!bytes || bytes === 0) return '0 B';
+  const k = 1024;
+  const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const i = Math.floor(Math.log(bytes) / Math.log(k));
+  return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+const MAX_HISTORY_POINTS = 120; // 4 minutes of 2s intervals
 
 export default function Overview() {
-  const { data: stats, loading } = useApi('/api/stats', { interval: 2000 });
-  const { data: alerts } = useApi('/api/alerts?limit=30', { interval: 3000 });
+  const { data: stats, loading, refetch: refetchStats } = useApi('/api/stats', { interval: 2000 });
+  const { data: alertsData } = useApi('/api/alerts?limit=50', { interval: 3000 });
   const { data: graphData } = useApi('/api/network/graph', { interval: 5000 });
-  const { data: riskScores } = useApi('/api/risk/scores', { interval: 5000 });
-  
+  const { data: blockedData } = useApi('/api/firewall/blocked', { interval: 6000 });
+
   // Live attack feed via WebSocket
   const [liveAlerts, setLiveAlerts] = useState([]);
   const wsRef = useRef(null);
   const feedListRef = useRef(null);
+
+  // Chart view controls
+  const [chartMetric, setChartMetric] = useState('traffic'); // 'traffic' (pps) | 'throughput' (KB/s) | 'threats'
+  const [timeWindow, setTimeWindow] = useState('all'); // '30s', '1m', '5m', 'all'
+  const [enableBrush, setEnableBrush] = useState(false);
+  const [feedFilter, setFeedFilter] = useState('ALL');
 
   useEffect(() => {
     const ws = new WebSocket(`${WS_BASE}/ws/alerts`);
@@ -42,7 +68,7 @@ export default function Overview() {
         const alert = JSON.parse(event.data);
         setLiveAlerts(prev => {
           const next = [alert, ...prev];
-          return next.length > 50 ? next.slice(0, 50) : next;
+          return next.length > 60 ? next.slice(0, 60) : next;
         });
       } catch {}
     };
@@ -55,97 +81,189 @@ export default function Overview() {
 
     return () => ws.close();
   }, []);
-  
-  // ── Real traffic chart: accumulates live pps from /api/stats ──────────────
-  const [chartData, setChartData] = useState(() =>
-    Array.from({ length: MAX_CHART_POINTS }, (_, i) => ({ time: i, traffic: 0, threats: 0 }))
-  );
-  const chartTickRef = useRef(0);
+
+  // Live time-series accumulator with real timestamps
+  const [historyData, setHistoryData] = useState(() => {
+    const now = Date.now();
+    return Array.from({ length: 30 }, (_, i) => {
+      const t = new Date(now - (30 - i) * 2000);
+      return {
+        timestamp: t.toLocaleTimeString(),
+        rawTime: t.getTime(),
+        traffic: 0,
+        throughput: 0,
+        threats: 0,
+      };
+    });
+  });
 
   useEffect(() => {
     if (!stats) return;
-    const pps    = stats.packets_per_second ?? 0;
-    const alrtCt = (alerts || []).length;
-    chartTickRef.current += 1;
-    setChartData(prev => {
-      const next = [...prev.slice(1), {
-        time:    chartTickRef.current,
+
+    const now = new Date();
+    const pps = stats.packets_per_second ?? 0;
+    const bps = stats.bytes_per_second ?? 0;
+    const throughputKb = parseFloat((bps / 1024).toFixed(2));
+    const alertsList = Array.isArray(alertsData) ? alertsData : (alertsData?.alerts || []);
+    const alertCount = alertsList.length;
+
+    setHistoryData(prev => {
+      const nextPoint = {
+        timestamp: now.toLocaleTimeString(),
+        rawTime: now.getTime(),
         traffic: pps,
-        threats: alrtCt,
-      }];
-      return next;
+        throughput: throughputKb,
+        threats: alertCount,
+      };
+      const updated = [...prev, nextPoint];
+      return updated.length > MAX_HISTORY_POINTS ? updated.slice(updated.length - MAX_HISTORY_POINTS) : updated;
     });
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [stats]);
+  }, [stats, alertsData]);
 
+  // Windowed chart data based on selected time filter
+  const displayChartData = useMemo(() => {
+    if (timeWindow === 'all') return historyData;
+    const countMap = { '30s': 15, '1m': 30, '5m': 75 };
+    const count = countMap[timeWindow] || historyData.length;
+    return historyData.slice(-count);
+  }, [historyData, timeWindow]);
 
-
-  if (loading && !stats) return <div className="empty-state">Loading dashboard...</div>;
-
+  // Derive metrics
   const activeFlows = stats?.flows?.active_flows || 0;
   const pps = stats?.packets_per_second || 0;
+  const bps = stats?.bytes_per_second || 0;
   const isCapturing = stats?.capture?.running || false;
-  const totalThreats = (alerts || []).length;
   
-  // Compute aggregate risk score
-  const avgRisk = riskScores && Array.isArray(riskScores) && riskScores.length > 0
-    ? Math.round(riskScores.reduce((sum, r) => sum + (r.score || 0), 0) / riskScores.length)
-    : 0;
+  const alertsList = Array.isArray(alertsData) ? alertsData : (alertsData?.alerts || []);
+  const feedAlerts = liveAlerts.length > 0 ? liveAlerts : alertsList;
+  const totalAlerts = feedAlerts.length;
 
-  const threatGlowClass = totalThreats > 10 ? 'glow-critical' : totalThreats > 0 ? 'glow-warning' : '';
-  const riskGlowClass = avgRisk > 70 ? 'glow-critical' : avgRisk > 40 ? 'glow-warning' : '';
+  const blockedCount = stats?.blocked_count !== undefined 
+    ? stats.blocked_count 
+    : (blockedData?.blocked_ips?.length || 0);
 
+  const totalBytesTransferred = stats?.flows?.total_bytes || 0;
+
+  // Severity counts
+  const criticalCount = feedAlerts.filter(a => {
+    const s = String(a.severity || '').toLowerCase();
+    return s.includes('crit') || s === '4';
+  }).length;
+
+  const highCount = feedAlerts.filter(a => {
+    const s = String(a.severity || '').toLowerCase();
+    return s.includes('high') || s === '3';
+  }).length;
+
+  // Protocol bar chart data
   const protocolData = Object.entries(stats?.protocol_distribution || {})
     .map(([name, value]) => ({ name, value }))
     .sort((a, b) => b.value - a.value)
     .slice(0, 7);
 
-  // Use REST alerts as fallback if WS hasn't received any yet
-  const feedAlerts = liveAlerts.length > 0 ? liveAlerts : (alerts || []);
+  const totalProtoPackets = protocolData.reduce((acc, p) => acc + p.value, 0) || 1;
+
+  // Filtered attack feed
+  const displayedFeed = useMemo(() => {
+    if (feedFilter === 'ALL') return feedAlerts;
+    if (feedFilter === 'CRITICAL') {
+      return feedAlerts.filter(a => String(a.severity).toLowerCase().includes('crit'));
+    }
+    if (feedFilter === 'HIGH+') {
+      return feedAlerts.filter(a => {
+        const s = String(a.severity).toLowerCase();
+        return s.includes('crit') || s.includes('high');
+      });
+    }
+    return feedAlerts;
+  }, [feedAlerts, feedFilter]);
 
   const mapNodes = graphData?.nodes || [];
   const mapLinks = graphData?.links || [];
 
+  // Render Skeleton while initial stats load
+  if (loading && !stats) {
+    return (
+      <div className="fade-in">
+        <div className="stat-grid-5" style={{ marginBottom: 20 }}>
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+          <SkeletonCard />
+        </div>
+        <div className="soc-grid">
+          <SkeletonChart height={420} />
+          <div className="card">
+            <SkeletonList items={6} />
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="fade-in">
-      {/* ── Top Row: 5 Stat Cards ── */}
+      {/* ── 8. Redesigned Overview Dashboard: The 5 Core Metrics ── */}
       <div className="stat-grid-5">
+        {/* 1. Packets */}
         <StatCard 
           title="Total Packets" 
           value={(stats?.packets_total || 0).toLocaleString()} 
           icon={Globe} 
+          change={
+            isCapturing ? (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: 'var(--success)' }}>
+                <span className="live-dot" /> {pps} pps
+              </span>
+            ) : 'Stopped'
+          }
           color="var(--info)"
           bg="var(--info-bg)"
         />
+
+        {/* 2. Active Flows */}
         <StatCard 
-          title="Active Connections" 
+          title="Active Flows" 
           value={activeFlows.toLocaleString()} 
           icon={Server} 
+          change={`${stats?.flows?.tcp_flows || 0} TCP • ${stats?.flows?.udp_flows || 0} UDP`}
           color="var(--accent)"
         />
+
+        {/* 3. Security Alerts */}
         <StatCard 
-          title="Threats Detected" 
-          value={totalThreats} 
+          title="Security Alerts" 
+          value={totalAlerts} 
           icon={ShieldAlert} 
-          color="var(--critical)"
-          bg="var(--critical-bg)"
-          className={threatGlowClass}
+          change={
+            criticalCount > 0 
+              ? `${criticalCount} Critical • ${highCount} High`
+              : totalAlerts > 0 ? `${totalAlerts} Monitored` : 'Zero Threat Hits'
+          }
+          color={criticalCount > 0 ? "var(--critical)" : totalAlerts > 0 ? "var(--high)" : "var(--success)"}
+          bg={criticalCount > 0 ? "var(--critical-bg)" : totalAlerts > 0 ? "var(--high-bg)" : "var(--success-bg)"}
+          className={criticalCount > 0 ? 'glow-critical' : totalAlerts > 0 ? 'glow-warning' : ''}
         />
+
+        {/* 4. Network Throughput */}
         <StatCard 
-          title="Risk Score" 
-          value={avgRisk > 0 ? `${avgRisk}/100` : '—'} 
-          icon={Gauge} 
-          color={avgRisk > 70 ? "var(--critical)" : avgRisk > 40 ? "var(--high)" : "var(--success)"}
-          bg={avgRisk > 70 ? "var(--critical-bg)" : avgRisk > 40 ? "var(--high-bg)" : "var(--success-bg)"}
-          className={riskGlowClass}
+          title="Throughput" 
+          value={formatThroughput(bps)} 
+          icon={HardDrive} 
+          change={`Total: ${formatBytes(totalBytesTransferred)}`}
+          color="var(--proto-tls)"
+          bg="hsla(175, 70%, 45%, 0.12)"
         />
+
+        {/* 5. Blocked Traffic */}
         <StatCard 
-          title="Packet Rate" 
-          value={isCapturing ? `${pps} pps` : 'OFF'} 
-          icon={Activity} 
-          change={isCapturing ? <span className="live-dot" style={{ display: 'inline-block', marginRight: 6 }}/> : 'Capture stopped'}
-          color={isCapturing ? "var(--success)" : "var(--text-muted)"}
-          bg={isCapturing ? "var(--success-bg)" : "var(--bg-elevated)"}
+          title="Blocked Traffic" 
+          value={blockedCount} 
+          icon={Ban} 
+          change={blockedCount > 0 ? 'Active Auto-Firewall' : 'Rules Standing By'}
+          color={blockedCount > 0 ? "var(--critical)" : "var(--text-muted)"}
+          bg={blockedCount > 0 ? "var(--critical-bg)" : "var(--bg-elevated)"}
         />
       </div>
 
@@ -170,31 +288,49 @@ export default function Overview() {
               <Radio size={16} color="var(--critical)" />
               Live Attack Feed
             </h3>
-            <span className="badge" style={{ backgroundColor: 'var(--critical-bg)', color: 'var(--critical)', fontSize: '0.7rem' }}>
-              {feedAlerts.length} events
-            </span>
+            
+            <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+              {['ALL', 'CRITICAL', 'HIGH+'].map(f => (
+                <button
+                  key={f}
+                  className={`btn-tag ${feedFilter === f ? 'active' : ''}`}
+                  onClick={() => setFeedFilter(f)}
+                >
+                  {f}
+                </button>
+              ))}
+            </div>
           </div>
+
           <div className="attack-feed-list" ref={feedListRef}>
-            {feedAlerts.length > 0 ? (
-              feedAlerts.map((alert, idx) => {
-                const sev = (alert.severity || 'medium').toLowerCase();
+            {displayedFeed.length > 0 ? (
+              displayedFeed.map((alert, idx) => {
+                const sevInfo = normalizeSeverity(alert.severity);
                 const ts = alert.timestamp 
                   ? new Date(alert.timestamp * 1000).toLocaleTimeString()
                   : alert.created_at 
                     ? new Date(alert.created_at).toLocaleTimeString()
-                    : '';
+                    : new Date().toLocaleTimeString();
+
                 return (
-                  <div key={alert.id || idx} className={`attack-feed-item severity-${sev}`}>
+                  <div key={alert.id || idx} className={`attack-feed-item severity-${sevInfo.label.toLowerCase()}`}>
                     <span className="feed-time">{ts}</span>
                     <div className="feed-body">
                       <div className="feed-title">
-                        <span className={`severity-badge ${sev}`} style={{ marginRight: 8, fontSize: '0.65rem' }}>
-                          {sev.toUpperCase()}
+                        <span 
+                          className="severity-pill"
+                          style={{
+                            color: sevInfo.color,
+                            backgroundColor: sevInfo.bg,
+                            border: `1px solid ${sevInfo.border}`,
+                          }}
+                        >
+                          {sevInfo.label}
                         </span>
-                        {alert.title}
+                        <span>{alert.title || alert.signature || alert.message || 'Suspicious Traffic Event'}</span>
                       </div>
                       <div className="feed-meta">
-                        <span className="feed-ip">{alert.src_ip}</span>
+                        <span className="feed-ip">{alert.src_ip || 'Internal'} ➔ {alert.dst_ip || 'Target'}</span>
                         {alert.mitre_technique && (
                           <span className="mitre-badge">MITRE: {alert.mitre_technique}</span>
                         )}
@@ -211,67 +347,187 @@ export default function Overview() {
             ) : (
               <div style={{ padding: '40px 20px', textAlign: 'center', color: 'var(--text-muted)' }}>
                 <ShieldAlert size={32} style={{ opacity: 0.3, marginBottom: 8 }} />
-                <p>No attacks detected. Monitoring...</p>
+                <p>No threat alerts matching current filter.</p>
               </div>
             )}
           </div>
         </div>
       </div>
 
-      {/* ── Bottom Row: Traffic Chart + Protocol Distribution ── */}
+      {/* ── 9. Upgraded Interactive Traffic Charts & Protocol Distribution ── */}
       <div className="grid-2">
-        {/* Network Traffic Chart */}
+        {/* Interactive Network Traffic Chart */}
         <div className="card">
-          <div className="card-header">
-            <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <Zap size={16} color="var(--accent)" />
-              Packet Rate (pps)
-              <span className="text-muted text-sm" style={{ fontWeight: 'normal', fontSize: '0.75rem' }}>live • packets per second</span>
-            </h3>
+          <div className="card-header" style={{ flexWrap: 'wrap', gap: 12, alignItems: 'center' }}>
+            <div>
+              <h3 className="card-title" style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <Zap size={16} color="var(--accent)" />
+                Interactive Telemetry
+              </h3>
+              <span className="text-muted text-sm">Real-time sampling with timestamps and zooming</span>
+            </div>
+
+            {/* Time Window & Metric Filters */}
+            <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+              {/* Metric Switcher */}
+              <div className="btn-group-pill">
+                <button 
+                  className={`btn-pill ${chartMetric === 'traffic' ? 'active' : ''}`}
+                  onClick={() => setChartMetric('traffic')}
+                >
+                  Packets (pps)
+                </button>
+                <button 
+                  className={`btn-pill ${chartMetric === 'throughput' ? 'active' : ''}`}
+                  onClick={() => setChartMetric('throughput')}
+                >
+                  Throughput (KB/s)
+                </button>
+                <button 
+                  className={`btn-pill ${chartMetric === 'threats' ? 'active' : ''}`}
+                  onClick={() => setChartMetric('threats')}
+                >
+                  Alerts
+                </button>
+              </div>
+
+              {/* Time Window Filter */}
+              <div className="btn-group-pill">
+                {['30s', '1m', '5m', 'all'].map(tw => (
+                  <button 
+                    key={tw}
+                    className={`btn-pill ${timeWindow === tw ? 'active' : ''}`}
+                    onClick={() => setTimeWindow(tw)}
+                  >
+                    {tw.toUpperCase()}
+                  </button>
+                ))}
+              </div>
+
+              {/* Zoom / Brush Toggle */}
+              <button 
+                className={`btn-icon-toggle ${enableBrush ? 'active' : ''}`}
+                onClick={() => setEnableBrush(prev => !prev)}
+                title="Toggle Zoom & Range Slider"
+              >
+                <Maximize2 size={14} />
+              </button>
+            </div>
           </div>
-          <div style={{ height: 260 }}>
+
+          <div style={{ height: enableBrush ? 300 : 260, paddingBottom: 6 }}>
             <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={chartData} margin={{ top: 10, right: 10, left: -20, bottom: 0 }}>
+              <AreaChart data={displayChartData} margin={{ top: 10, right: 15, left: -15, bottom: 0 }}>
                 <defs>
-                  <linearGradient id="colorTraffic" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="var(--accent)" stopOpacity={0.4}/>
-                    <stop offset="95%" stopColor="var(--accent)" stopOpacity={0}/>
+                  <linearGradient id="metricGradient" x1="0" y1="0" x2="0" y2="1">
+                    <stop 
+                      offset="5%" 
+                      stopColor={
+                        chartMetric === 'throughput' ? 'var(--proto-tls)' :
+                        chartMetric === 'threats' ? 'var(--critical)' : 'var(--accent)'
+                      } 
+                      stopOpacity={0.4}
+                    />
+                    <stop 
+                      offset="95%" 
+                      stopColor={
+                        chartMetric === 'throughput' ? 'var(--proto-tls)' :
+                        chartMetric === 'threats' ? 'var(--critical)' : 'var(--accent)'
+                      } 
+                      stopOpacity={0.0}
+                    />
                   </linearGradient>
                 </defs>
                 <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" vertical={false} />
-                <XAxis dataKey="time" hide />
-                <YAxis stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} tickFormatter={v => `${v}`} />
-                <Tooltip 
-                  contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderRadius: 8 }}
-                  itemStyle={{ color: 'var(--text-primary)' }}
-                  formatter={(v, name) => [`${v} pps`, 'Packet Rate']}
-                  labelFormatter={() => ''}
+                <XAxis 
+                  dataKey="timestamp" 
+                  stroke="var(--text-muted)" 
+                  fontSize={11} 
+                  tickLine={false} 
+                  axisLine={false}
+                  minTickGap={25}
                 />
-                <Area type="monotone" dataKey="traffic" stroke="var(--accent)" strokeWidth={3} fillOpacity={1} fill="url(#colorTraffic)" animationDuration={300} isAnimationActive={false} />
+                <YAxis 
+                  stroke="var(--text-muted)" 
+                  fontSize={11} 
+                  tickLine={false} 
+                  axisLine={false} 
+                  tickFormatter={v => `${v}`}
+                />
+                <Tooltip 
+                  contentStyle={{ 
+                    background: 'var(--bg-elevated)', 
+                    border: '1px solid var(--border-default)', 
+                    borderRadius: 8,
+                    boxShadow: 'var(--shadow-md)',
+                  }}
+                  itemStyle={{ color: 'var(--text-primary)', fontSize: 13 }}
+                  labelStyle={{ color: 'var(--text-secondary)', fontWeight: 600, marginBottom: 4 }}
+                  formatter={(val, name) => {
+                    if (chartMetric === 'throughput') return [`${val} KB/s`, 'Throughput'];
+                    if (chartMetric === 'threats') return [`${val} events`, 'Threat Alerts'];
+                    return [`${val} pps`, 'Packet Rate'];
+                  }}
+                />
+                <Area 
+                  type="monotone" 
+                  dataKey={chartMetric} 
+                  stroke={
+                    chartMetric === 'throughput' ? 'var(--proto-tls)' :
+                    chartMetric === 'threats' ? 'var(--critical)' : 'var(--accent)'
+                  } 
+                  strokeWidth={2.5} 
+                  fillOpacity={1} 
+                  fill="url(#metricGradient)" 
+                  animationDuration={300} 
+                  isAnimationActive={false} 
+                />
+                {enableBrush && (
+                  <Brush 
+                    dataKey="timestamp" 
+                    height={26} 
+                    stroke="var(--accent)" 
+                    fill="var(--bg-card)"
+                    travellerWidth={10}
+                  />
+                )}
               </AreaChart>
             </ResponsiveContainer>
           </div>
         </div>
 
-        {/* Protocol Distribution */}
+        {/* Protocol Distribution with Percentage shares */}
         <div className="card">
           <div className="card-header">
             <h3 className="card-title">Protocol Distribution</h3>
+            <span className="text-muted text-sm">{protocolData.length} protocols detected</span>
           </div>
           {protocolData.length > 0 ? (
             <div style={{ height: 260 }}>
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={protocolData} layout="vertical" margin={{ top: 0, right: 20, left: 0, bottom: 0 }}>
+                <BarChart data={protocolData} layout="vertical" margin={{ top: 0, right: 30, left: 0, bottom: 0 }}>
                   <CartesianGrid strokeDasharray="3 3" stroke="var(--border-subtle)" horizontal={false} />
                   <XAxis type="number" hide />
-                  <YAxis dataKey="name" type="category" width={60} stroke="var(--text-muted)" fontSize={12} tickLine={false} axisLine={false} />
+                  <YAxis 
+                    dataKey="name" 
+                    type="category" 
+                    width={65} 
+                    stroke="var(--text-muted)" 
+                    fontSize={12} 
+                    tickLine={false} 
+                    axisLine={false} 
+                  />
                   <Tooltip 
                     cursor={{ fill: 'var(--bg-card-hover)' }}
                     contentStyle={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-default)', borderRadius: 8 }}
+                    formatter={(val) => {
+                      const pct = ((val / totalProtoPackets) * 100).toFixed(1);
+                      return [`${val.toLocaleString()} pkts (${pct}%)`, 'Volume'];
+                    }}
                   />
                   <Bar dataKey="value" radius={[0, 4, 4, 0]} barSize={16}>
                     {protocolData.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[entry.name] || 'var(--accent)'} />
+                      <Cell key={`cell-${index}`} fill={PROTO_COLORS[entry.name] || 'var(--accent)'} />
                     ))}
                   </Bar>
                 </BarChart>
