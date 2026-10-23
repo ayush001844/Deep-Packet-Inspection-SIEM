@@ -3,7 +3,6 @@
   "outputDirectory": "dashboard/dist",
   "framework": "vite",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://your-backend-url/api/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
   "headers": [

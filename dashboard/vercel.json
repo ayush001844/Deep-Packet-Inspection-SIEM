@@ -4,12 +4,8 @@
   "installCommand": "npm install --legacy-peer-deps",
   "framework": "vite",
   "rewrites": [
-    { "source": "/api/(.*)", "destination": "https://your-backend-url/api/$1" },
     { "source": "/((?!api/).*)", "destination": "/index.html" }
   ],
-  "env": {
-    "VITE_API_BASE_URL": "@vite_api_base_url"
-  },
   "headers": [
     {
       "source": "/(.*)",
