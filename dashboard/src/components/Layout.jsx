@@ -8,6 +8,7 @@ export default function Layout() {
   const location = useLocation();
   const [isMobileOpen, setIsMobileOpen] = useState(false);
   const [isSearchOpen, setIsSearchOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(true); // Default compact rail to match Netography screenshot
 
   // Close mobile sidebar on route change
   useEffect(() => {
@@ -27,7 +28,7 @@ export default function Layout() {
   }, []);
 
   const titles = {
-    '/': 'Dashboard Overview',
+    '/': 'Home',
     '/capture': 'Live Packet Capture',
     '/packets': 'Packet Log & Deep Inspection',
     '/flows': 'Active Network Flows',
@@ -44,13 +45,15 @@ export default function Layout() {
     '/settings': 'System Settings & Capture Config',
   };
 
-  const title = titles[location.pathname] || 'PacketAnalyzer-Pro';
+  const title = titles[location.pathname] || 'Home';
 
   return (
-    <div className="app-layout">
+    <div className={`app-layout ${isSidebarCollapsed ? 'sidebar-collapsed' : ''}`}>
       <Sidebar 
         isMobileOpen={isMobileOpen} 
-        onCloseMobile={() => setIsMobileOpen(false)} 
+        onCloseMobile={() => setIsMobileOpen(false)}
+        isCollapsed={isSidebarCollapsed}
+        onToggleCollapse={() => setIsSidebarCollapsed(p => !p)}
       />
       
       <div className="main-content">
@@ -60,7 +63,7 @@ export default function Layout() {
           onOpenSearch={() => setIsSearchOpen(true)}
         />
         
-        <main className="page-content">
+        <main className="page-content" style={{ padding: 0, overflowY: 'auto' }}>
           <Outlet />
         </main>
       </div>

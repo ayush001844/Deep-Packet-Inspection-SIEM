@@ -182,6 +182,39 @@ code, pre, .mono {
   flex-direction: column;
   overflow: hidden;
   margin-left: var(--sidebar-width);
+  transition: margin-left var(--transition-normal);
+}
+
+.app-layout.sidebar-collapsed .main-content {
+  margin-left: 58px;
+}
+
+.sidebar.collapsed {
+  width: 58px !important;
+}
+
+.sidebar-rail-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #94a3b8;
+  background: transparent;
+  transition: all 0.15s ease;
+  text-decoration: none;
+}
+
+.sidebar-rail-btn:hover {
+  background: #1e2634;
+  color: #f1f5f9;
+}
+
+.sidebar-rail-btn.active {
+  background: hsla(210, 100%, 55%, 0.16);
+  color: #38bdf8;
+  box-shadow: 0 0 10px hsla(210, 100%, 55%, 0.25);
 }
 
 .page-content {
