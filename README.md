@@ -253,7 +253,7 @@ Test coverage:
 
 ## 10. Demo
 - Navigate to the **Overview** page to watch the live attack feed and world map update in real-time via WebSockets
-- Go to the **PCAP Analysis** page and upload `sample_traffic.pcap` or `ddos_attack.pcap` to see the PCAP Intelligence engine evaluate the file
+- Go to the **PCAP Analysis** page and upload `sample_traffic.pcap` or `ddos_attack.pcap` (located in `backend/data/uploads/`) to see the PCAP Intelligence engine evaluate the file
 - Visit the **ATT&CK Matrix** page to see the MITRE heatmap showing detected techniques across all 14 tactics
 - Check **Settings** to configure the Automated Response Engine thresholds
 
@@ -264,7 +264,9 @@ Deep-Packet-Inspection-SIEM/
 ├── backend/
 │   ├── ai/                    # LLM-powered security assistant
 │   ├── capture/               # Scapy sniffer + PCAP analyzer
-│   ├── db/                    # PostgreSQL + Elasticsearch persistence
+│   ├── data/                  # SQLite DB & uploaded PCAP files
+│   │   └── uploads/           # Sample & uploaded PCAPs
+│   ├── db/                    # PostgreSQL/SQLite + Elasticsearch persistence
 │   ├── detection/             # IDS, classifier, risk scoring, MITRE, incidents
 │   │   ├── mitre.py           # MITRE technique-tactic mapping
 │   │   ├── mitre_navigator.py # Full ATT&CK matrix heatmap (Upgrade 7)
@@ -272,18 +274,20 @@ Deep-Packet-Inspection-SIEM/
 │   │   └── ...
 │   ├── dpi/                   # Protocol parser + session tracker
 │   ├── firewall/              # Cross-platform firewall (iptables/PF/Windows)
-│   ├── ml/                    # XGBoost + RandomForest models
+│   ├── ml_engine/             # Autoencoder + XGBoost/RandomForest models
 │   ├── mq/                    # Redis Pub/Sub + Streams
 │   ├── reporting/             # PDF report generation
 │   ├── response/              # Automated Response Engine (Upgrade 6)
 │   │   └── response_engine.py # Block IP, isolate host, disable account, create incident
 │   ├── threat/                # Threat feeds + CVSS scoring
+│   ├── ueba/                  # User & Entity Behavior Analytics
 │   ├── workers/               # Background detection workers
 │   ├── auth.py                # JWT + refresh tokens + API keys (Upgrade 8)
 │   ├── rate_limiter.py        # Sliding-window rate limiter (Upgrade 8)
 │   ├── main.py                # FastAPI application entry point
 │   ├── Dockerfile             # Non-root, multi-stage build (Upgrade 8)
 │   └── requirements.txt
+├── docs/                      # Project documentation and abstracts
 ├── dashboard/
 │   ├── src/
 │   │   ├── pages/

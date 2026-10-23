@@ -1,8 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-
-// Use relative paths so Vite proxy forwards to backend (port 8000)
-const API_BASE = '';
-const WS_BASE = `ws://${window.location.hostname}:8000`;
+import { API_BASE, WS_BASE } from '../config';
 
 /* ── Auth helpers ───────────────────────────────────────────── */
 function getAuthHeaders() {

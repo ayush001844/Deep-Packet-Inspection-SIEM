@@ -21,8 +21,9 @@ from sqlalchemy.orm import declarative_base, sessionmaker, Session
 # Setup
 # ---------------------------------------------------------------------------
 
-# Default to SQLite for easy local development without Docker
-DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///soc.db")
+# Default to SQLite in backend/data for clean local development without Docker
+_DEFAULT_DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "data", "soc.db")
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{_DEFAULT_DB_PATH}")
 
 _engine_kwargs = {"echo": False, "future": True}
 if "sqlite" in DATABASE_URL:

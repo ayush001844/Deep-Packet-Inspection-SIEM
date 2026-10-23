@@ -190,90 +190,89 @@ export default function MitreNavigator() {
         </div>
       )}
 
-      {activeTab === 'matrix' && coverageData && (
-        <div className="mitre-coverage-section">
-          <h3>Tactic Coverage</h3>
-          <div className="mitre-coverage-grid">
-            {coverageData.tactics.map(tactic => (
-              <div key={tactic.tactic_id} className="mitre-coverage-bar-item">
-                <div className="mitre-coverage-label">
-                  <span className="mitre-coverage-name">{tactic.tactic_name}</span>
-                  <span className="mitre-coverage-pct">{tactic.detected_techniques}/{tactic.total_techniques}</span>
-                </div>
-                <div className="mitre-coverage-track">
-                  <div
-                    className="mitre-coverage-fill"
-                    style={{
-                      width: `${Math.max(tactic.coverage_percent, 2)}%`,
-                      background: tactic.coverage_percent > 50 ? 'var(--accent-red)' :
-                                  tactic.coverage_percent > 20 ? 'var(--accent-amber)' :
-                                  tactic.total_hits > 0 ? 'var(--accent-green)' : 'var(--glass-border)',
-                    }}
-                  />
-                </div>
+      {activeTab === 'matrix' && (
+        <>
+          {coverageData && (
+            <div className="mitre-coverage-section">
+              <h3>Tactic Coverage</h3>
+              <div className="mitre-coverage-grid">
+                {coverageData.tactics.map(tactic => (
+                  <div key={tactic.tactic_id} className="mitre-coverage-bar-item">
+                    <div className="mitre-coverage-label">
+                      <span className="mitre-coverage-name">{tactic.tactic_name}</span>
+                      <span className="mitre-coverage-pct">{tactic.detected_techniques}/{tactic.total_techniques}</span>
+                    </div>
+                    <div className="mitre-coverage-track">
+                      <div
+                        className="mitre-coverage-fill"
+                        style={{
+                          width: `${Math.max(tactic.coverage_percent, 2)}%`,
+                          background: tactic.coverage_percent > 50 ? 'var(--accent-red)' :
+                                      tactic.coverage_percent > 20 ? 'var(--accent-amber)' :
+                                      tactic.total_hits > 0 ? 'var(--accent-green)' : 'var(--glass-border)',
+                        }}
+                      />
+                    </div>
+                  </div>
+                ))}
               </div>
+            </div>
+          )}
+
+          {/* Legend */}
+          <div className="mitre-legend">
+            <span className="mitre-legend-label">Heat:</span>
+            {Object.entries(HEAT_TEXT_COLORS).map(([level, color]) => (
+              <span key={level} className="mitre-legend-item" style={{ color }}>
+                <span className="mitre-legend-dot" style={{ background: color }} />
+                {level === 'none' ? 'No detections' : level.charAt(0).toUpperCase() + level.slice(1)}
+              </span>
             ))}
           </div>
-        </div>
-      )}
 
-      {/* Legend */}
-      <div className="mitre-legend">
-        <span className="mitre-legend-label">Heat:</span>
-        {Object.entries(HEAT_TEXT_COLORS).map(([level, color]) => (
-          <span key={level} className="mitre-legend-item" style={{ color }}>
-            <span className="mitre-legend-dot" style={{ background: color }} />
-            {level === 'none' ? 'No detections' : level.charAt(0).toUpperCase() + level.slice(1)}
-          </span>
-        ))}
-      </div>
-
-      {/* ATT&CK Matrix Grid */}
-      <div className="mitre-matrix-container">
-        <div className="mitre-matrix-grid">
-          {matrixData.tactics.map(tactic => {
-            const techniques = matrixData.matrix[tactic.id] || [];
-            return (
-              <div key={tactic.id} className="mitre-tactic-column">
-                <div className="mitre-tactic-header">
-                  <span className="mitre-tactic-name">{tactic.name}</span>
-                  <span className="mitre-tactic-count">{techniques.length}</span>
-                </div>
-                <div className="mitre-technique-list">
-                  {techniques.map(tech => (
-                    <div
-                      key={`${tactic.id}-${tech.id}`}
-                      className={`mitre-technique-cell ${selectedTechnique?.id === tech.id ? 'selected' : ''}`}
-                      style={{
-                        background: HEAT_COLORS[tech.heat],
-                        borderColor: HEAT_BORDER_COLORS[tech.heat],
-                        color: HEAT_TEXT_COLORS[tech.heat],
-                      }}
-                      onClick={() => setSelectedTechnique(tech)}
-                      title={`${tech.id}: ${tech.name} (${tech.count} detections)`}
-                    >
-                      <span className="mitre-tech-id">{tech.id}</span>
-                      <span className="mitre-tech-name">{tech.name}</span>
-                      {tech.count > 0 && (
-                        <span
-                          className="mitre-tech-badge"
-                          style={{ background: HEAT_BADGE_COLORS[tech.heat], color: HEAT_TEXT_COLORS[tech.heat] }}
-                        >
-                          {tech.count}
-                        </span>
-                      )}
+          {/* ATT&CK Matrix Grid */}
+          <div className="mitre-matrix-container">
+            <div className="mitre-matrix-grid">
+              {matrixData.tactics.map(tactic => {
+                const techniques = matrixData.matrix[tactic.id] || [];
+                return (
+                  <div key={tactic.id} className="mitre-tactic-column">
+                    <div className="mitre-tactic-header">
+                      <span className="mitre-tactic-name">{tactic.name}</span>
+                      <span className="mitre-tactic-count">{techniques.length}</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Technique Detail Panel */}
+                    <div className="mitre-technique-list">
+                      {techniques.map(tech => (
+                        <div
+                          key={`${tactic.id}-${tech.id}`}
+                          className={`mitre-technique-cell ${selectedTechnique?.id === tech.id ? 'selected' : ''}`}
+                          style={{
+                            background: HEAT_COLORS[tech.heat],
+                            borderColor: HEAT_BORDER_COLORS[tech.heat],
+                            color: HEAT_TEXT_COLORS[tech.heat],
+                          }}
+                          onClick={() => setSelectedTechnique(tech)}
+                          title={`${tech.id}: ${tech.name} (${tech.count} detections)`}
+                        >
+                          <span className="mitre-tech-id">{tech.id}</span>
+                          <span className="mitre-tech-name">{tech.name}</span>
+                          {tech.count > 0 && (
+                            <span
+                              className="mitre-tech-badge"
+                              style={{ background: HEAT_BADGE_COLORS[tech.heat], color: HEAT_TEXT_COLORS[tech.heat] }}
+                            >
+                              {tech.count}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
           </div>
-        </div>
+        </>
       )}
       
       {/* Detail Panel */}
